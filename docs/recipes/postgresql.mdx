@@ -1,0 +1,74 @@
+---
+title: "PostgreSQL"
+description: "Consistent dumps with pg_dumpall or pg_dump, on the host or in Docker."
+icon: "database"
+---
+
+*Dump it like it's hot.*
+
+## Installed on the host
+
+`pg_dumpall` takes a consistent snapshot of every database, plus roles and permissions, without locking writers.
+
+```yaml
+- name: postgres
+  sources: [/var/backups/nobackups/postgres]
+  destinations: [offsite]
+  schedule: "0 */6 * * *"
+  compression: zstd
+  hooks:
+    before:
+      - |
+        set -eu
+        umask 077
+        mkdir -p /var/backups/nobackups/postgres
+        cd /tmp && sudo -u postgres pg_dumpall --clean --if-exists > /var/backups/nobackups/postgres/all.sql
+    after:
+      - rm -f /var/backups/nobackups/postgres/all.sql
+  retention: { keep_last: 28 }
+```
+
+### Large databases
+
+For big databases, use one custom-format dump per database instead. These dump in parallel, and `pg_restore` can restore a single table:
+
+```yaml
+    before:
+      - |
+        set -eu
+        umask 077
+        D=/var/backups/nobackups/postgres
+        install -d -m 700 -o postgres "$D"   # pg_dump -Fd writes as the postgres user
+        cd /tmp
+        sudo -u postgres pg_dumpall --globals-only > "$D/globals.sql"
+        for db in $(sudo -u postgres psql -Atc "SELECT datname FROM pg_database WHERE NOT datistemplate"); do
+          sudo -u postgres pg_dump -Fd -j 4 -Z 0 -f "$D/$db.dir" "$db"
+        done
+    after:
+      - rm -rf /var/backups/nobackups/postgres/*
+```
+
+(`-Z 0` turns off pg_dump's own compression, because NoBackups compresses with zstd anyway.)
+
+## In Docker
+
+The same idea, with the dump coming out of the container:
+
+```yaml
+    before:
+      - |
+        set -eu
+        umask 077
+        mkdir -p /var/backups/nobackups/postgres
+        docker exec my-postgres pg_dumpall -U postgres --clean --if-exists > /var/backups/nobackups/postgres/all.sql
+```
+
+## Restore
+
+
+
+```sh
+nobackups restore postgres --target /tmp/r
+psql -U postgres -f /tmp/r/var/backups/nobackups/postgres/all.sql
+# docker: docker exec -i my-postgres psql -U postgres < /tmp/r/var/backups/nobackups/postgres/all.sql
+```

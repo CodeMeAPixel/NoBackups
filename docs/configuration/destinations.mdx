@@ -1,0 +1,192 @@
+---
+title: "Destinations"
+description: "Where your data goes on holiday. Any S3-compatible store, or a local directory."
+icon: "bucket"
+---
+
+Destinations are named once, then referenced from jobs by name:
+
+```yaml
+destinations:
+  hetzner:            # ← the name jobs use
+    type: s3
+    ...
+  nas:
+    type: local
+    path: /mnt/nas/backups
+
+jobs:
+  - name: system
+    destinations: [hetzner, nas]
+```
+
+Names may contain letters, digits, `.`, `_` and `-`.
+
+## Common options
+
+<ParamField path="type" type="string" required>
+  `s3` for any S3-compatible object store, or `local` for a directory.
+</ParamField>
+
+<ParamField path="prefix" type="string">
+  Key prefix (S3) or subdirectory (local) under which job folders are created. `{hostname}` is replaced with the server's hostname, so a single bucket can serve a whole fleet:
+
+  ```yaml
+  prefix: servers/{hostname}     # → servers/web01/<job>/...
+  ```
+</ParamField>
+
+## S3 options
+
+<ParamField path="endpoint" type="string" required>
+  Host, with an optional port, e.g. `fsn1.your-objectstorage.com` or `10.0.0.5:9000`. Prefix with `http://` to use plain HTTP; `https://` is the default.
+</ParamField>
+
+<ParamField path="bucket" type="string" required>
+  The bucket must already exist. `nobackups check` tells you if it doesn't.
+</ParamField>
+
+<ParamField path="access_key_id" type="string" required />
+<ParamField path="secret_access_key" type="string" required />
+
+<ParamField path="session_token" type="string">
+  For temporary credentials.
+</ParamField>
+
+<ParamField path="region" type="string" default="us-east-1">
+  Most self-hosted stores ignore this.
+</ParamField>
+
+<ParamField path="path_style" type="boolean" default="false">
+  Use `https://endpoint/bucket/key` addressing instead of `https://bucket.endpoint/key`. Most self-hosted stores (RustFS, MinIO, Garage) need `true`.
+</ParamField>
+
+<ParamField path="use_ssl" type="boolean" default="true">
+  Normally inferred from the endpoint's `http://` or `https://` prefix.
+</ParamField>
+
+<ParamField path="storage_class" type="string">
+  E.g. `STANDARD_IA` or `GLACIER_IR` on AWS.
+</ParamField>
+
+<ParamField path="part_size_mb" type="integer" default="64">
+  Multipart upload chunk size, minimum 5. The largest possible snapshot is 10,000 × this (640 GB at the default). Memory use is roughly this much per destination. Raise it for very large backups.
+</ParamField>
+
+<ParamField path="ca_file" type="string">
+  PEM file with a private CA certificate, for self-hosted stores behind an internal CA.
+</ParamField>
+
+<ParamField path="insecure_skip_verify" type="boolean" default="false">
+  Skip TLS certificate verification. Last resort for self-signed certificates; prefer `ca_file`.
+</ParamField>
+
+## Local options
+
+<ParamField path="path" type="string" required>
+  Absolute path to a directory, e.g. a second disk or an NFS mount. Snapshots are written to a `.partial` file first, then renamed, so a half-written file never looks like a snapshot.
+</ParamField>
+
+## Provider examples
+
+<Tabs>
+  <Tab title="Hetzner">
+    Endpoints: `fsn1`, `nbg1` and `hel1` `.your-objectstorage.com`. Create credentials under **Object Storage → Security credentials** in the Hetzner Console.
+
+    ```yaml
+    hetzner:
+      type: s3
+      endpoint: fsn1.your-objectstorage.com
+      region: fsn1
+      bucket: my-backups
+      access_key_id: ${HETZNER_ACCESS_KEY}
+      secret_access_key: ${HETZNER_SECRET_KEY}
+      prefix: servers/{hostname}
+    ```
+  </Tab>
+  <Tab title="RustFS / MinIO">
+    ```yaml
+    rustfs:
+      type: s3
+      endpoint: http://rustfs.internal:9000     # or https:// with ca_file
+      bucket: backups
+      access_key_id: ${RUSTFS_ACCESS_KEY}
+      secret_access_key: ${RUSTFS_SECRET_KEY}
+      path_style: true
+      prefix: "{hostname}"
+    ```
+  </Tab>
+  <Tab title="Alarik / Garage">
+    Other self-hosted S3-compatible stores work the same way as RustFS. Use the endpoint and region your server is configured with, and `path_style: true` unless you've set up virtual-host-style bucket DNS.
+
+    ```yaml
+    alarik:
+      type: s3
+      endpoint: https://s3.example.internal
+      region: us-east-1         # match the region your server is configured with
+      bucket: backups
+      access_key_id: ${ALARIK_ACCESS_KEY}
+      secret_access_key: ${ALARIK_SECRET_KEY}
+      path_style: true
+    ```
+  </Tab>
+  <Tab title="AWS S3">
+    ```yaml
+    aws:
+      type: s3
+      endpoint: s3.eu-central-1.amazonaws.com
+      region: eu-central-1
+      bucket: my-backups
+      access_key_id: ${AWS_ACCESS_KEY_ID}
+      secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+      storage_class: STANDARD_IA
+    ```
+  </Tab>
+  <Tab title="Cloudflare R2">
+    ```yaml
+    r2:
+      type: s3
+      endpoint: <account-id>.r2.cloudflarestorage.com
+      region: auto
+      bucket: my-backups
+      access_key_id: ${R2_ACCESS_KEY}
+      secret_access_key: ${R2_SECRET_KEY}
+    ```
+  </Tab>
+  <Tab title="Backblaze B2">
+    ```yaml
+    b2:
+      type: s3
+      endpoint: s3.eu-central-003.backblazeb2.com
+      region: eu-central-003
+      bucket: my-backups
+      access_key_id: ${B2_KEY_ID}
+      secret_access_key: ${B2_APP_KEY}
+    ```
+  </Tab>
+  <Tab title="Local / NFS">
+    ```yaml
+    nas:
+      type: local
+      path: /mnt/nas/backups
+      prefix: "{hostname}"
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+  Give backup credentials the least privilege you can: read, write, list and delete on **one** bucket (or prefix). Bucket versioning or object lock protects you if a server is compromised and someone tries to delete its backups.
+</Tip>
+
+## Testing destinations
+
+```bash
+nobackups check
+```
+
+For each destination, this checks the bucket exists (S3), then writes, lists and deletes a small test object:
+
+```text
+✓ hetzner              ok
+✗ rustfs               write: The Access Key Id you provided does not exist in our records.
+```

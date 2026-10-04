@@ -1,0 +1,95 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "NoBackups",
+  "description": "Config-driven backups for Linux servers, to any S3-compatible storage.",
+  "colors": {
+    "primary": "#0F766E",
+    "light": "#2DD4BF",
+    "dark": "#0F766E"
+  },
+  "favicon": "/favicon.svg",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": ["index", "quickstart", "installation", "how-it-works"]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/overview",
+              "configuration/destinations",
+              "configuration/jobs",
+              "configuration/encryption",
+              "configuration/retention",
+              "configuration/hooks",
+              "configuration/notifications"
+            ]
+          },
+          {
+            "group": "Operating",
+            "pages": ["guides/restoring", "guides/operations"]
+          }
+        ]
+      },
+      {
+        "tab": "Recipes",
+        "groups": [
+          {
+            "group": "Before you start",
+            "pages": ["recipes/overview"]
+          },
+          {
+            "group": "Containers",
+            "pages": ["recipes/docker"]
+          },
+          {
+            "group": "Databases",
+            "pages": [
+              "recipes/postgresql",
+              "recipes/mysql",
+              "recipes/mongodb",
+              "recipes/redis",
+              "recipes/sqlite"
+            ]
+          },
+          {
+            "group": "Servers & platforms",
+            "pages": ["recipes/virtfusion", "recipes/whole-server", "recipes/web-and-mail"]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "Reference",
+            "pages": ["reference/cli", "reference/config", "reference/development"]
+          }
+        ]
+      }
+    ]
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/codemeapixel/nobackups"
+    }
+  },
+  "contextual": {
+    "options": ["copy", "view", "chatgpt", "claude"]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/codemeapixel/nobackups"
+    }
+  }
+}

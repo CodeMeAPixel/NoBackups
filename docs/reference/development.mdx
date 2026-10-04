@@ -1,0 +1,77 @@
+---
+title: "Development"
+description: "Building, testing and releasing NoBackups. Backing up our claims."
+icon: "code"
+---
+
+## Requirements
+
+- Go 1.24+
+- GNU make
+- Node.js 20+ (only for working on these docs)
+
+## Make targets
+
+Run `make` on its own for the full menu.
+
+| Target | What it does |
+|---|---|
+| `make build` | Build `./nobackups` for this machine |
+| `make dist` | Static binaries for linux amd64, arm64 and armv7 in `dist/` (`PLATFORMS="linux/amd64"` to narrow it) |
+| `make checksums` | `dist` + `dist/SHA256SUMS` |
+| `make run ARGS="validate"` | Build and run against `CONFIG` (default `./config.yaml`) |
+| `make demo` | Local-disk backup → restore round trip, no S3 needed |
+| `make test` | All tests with the race detector, including end-to-end tests against an in-process S3 server |
+| `make test-short` | Fast tests only |
+| `make cover` | Coverage report in `coverage.html` |
+| `make fmt` / `make lint` | Format, or check formatting + `go vet` (+ `staticcheck` if installed) |
+| `make check` | Lint + tests, the same as CI. Run it before you push |
+| `make docs` | Live preview of these docs at http://localhost:3000 |
+| `make docs-check` | Validate the docs build and check for broken links |
+| `make install` / `make uninstall` | Build, then run `nobackups install` / `uninstall` (`PREFIX`, `DESTDIR` supported) |
+| `make deploy HOST=user@server` | Cross-compile, copy the binary over ssh and run `nobackups install` there |
+| `make clean` | Remove build output |
+
+## Project layout
+
+```text
+cmd/nobackups/        CLI, daemon and the embedded example config
+internal/config/      YAML loading, ${VAR} expansion, validation
+internal/storage/     Backends: S3 (minio-go) and local directories
+internal/archive/     tar creation (excludes, one_file_system) and extraction
+internal/backup/      Job runner: hooks, compression, age, fan-out upload, retention, restore
+internal/notify/      Discord and generic webhooks
+install.sh            Server installer: builds from a clone or downloads a release
+deploy/               systemd unit and env template, embedded into the binary
+docs/                 This site (Mintlify)
+```
+
+## Tests
+
+The end-to-end tests run real backups against an in-process S3 server (over TLS, with multipart uploads) and a local directory, for every compression and encryption combination. Each run is followed by retention and a full restore that's checked byte for byte. We test our restores, and you should test yours.
+
+## Releasing
+
+Releases are built by GitHub Actions. Either:
+
+- **From the GitHub website:** go to **Actions → CI → Run workflow**, enter a version such as `v0.1.0` and run it. No git tagging on your machine needed.
+- **From git:** `git tag v0.1.0 && git push origin v0.1.0`
+
+Either way, the workflow runs the tests and docs checks, cross-compiles the binaries, writes `SHA256SUMS`, and publishes a GitHub release with generated release notes. The release includes the binaries for amd64, arm64 and armv7, `SHA256SUMS` and `install.sh`. Versions with a suffix (`v0.2.0-rc1`) are marked as pre-releases, so the installer's "latest" skips them.
+
+<Note>
+  The installer downloads from the latest release when a server has no Go. Publish a release before pointing people at the one-liner.
+</Note>
+
+## Docs
+
+The docs live in `docs/` and are built with [Mintlify](https://mintlify.com). Navigation is in `docs/docs.json`.
+
+```bash
+make docs         # preview
+make docs-check   # validate + broken links
+```
+
+<Note>
+  `docs/reference/config.mdx` embeds `cmd/nobackups/example.yaml`. A test fails if the two drift apart, so update both together.
+</Note>

@@ -1,0 +1,88 @@
+---
+title: "Operations"
+description: "Day two (and day two thousand): logs, monitoring, reloads and upgrades."
+icon: "server"
+---
+
+## The service
+
+The systemd unit runs `nobackups daemon`, which runs each job on its `schedule`.
+
+```bash
+sudo systemctl enable --now nobackups   # start and enable at boot
+sudo systemctl status nobackups
+sudo systemctl reload nobackups         # re-read the config (SIGHUP)
+sudo systemctl restart nobackups
+```
+
+The unit runs as root (so it can read everything you ask it to back up) at reduced CPU and I/O priority, so backups don't elbow production workloads. On stop, running jobs are cancelled and in-progress uploads are aborted cleanly.
+
+## Logs
+
+```bash
+journalctl -u nobackups -f
+journalctl -u nobackups --since today
+```
+
+Logs are structured key/value lines:
+
+```text
+level=INFO msg="backup started" job=system
+level=INFO msg=uploaded job=system destination=hetzner key=system/system-20261004T031500Z.tar.zst.age
+level=INFO msg="pruned snapshot" job=system destination=hetzner snapshot=20260927T031500Z
+level=INFO msg="backup finished" job=system files=48211 bytes=3221225472 stored_bytes=987654321 warnings=0 duration=2m31s
+```
+
+Set `log_level: debug` in the config (or pass `-v` to a single command) for more detail.
+
+## Monitoring
+
+<CardGroup cols={2}>
+  <Card title="Notifications" icon="bell" href="/configuration/notifications">
+    Discord and webhooks on failure and warning, plus a dead man's switch for "stopped running".
+  </Card>
+  <Card title="Status command" icon="list">
+    `nobackups status` for humans, `nobackups status --json` for scripts.
+  </Card>
+</CardGroup>
+
+```bash
+nobackups status
+```
+
+```text
+JOB       LAST RUN          STATUS  DURATION  STORED     ERROR
+system    2026-10-04 03:15  ok      2m31s     941.9 MiB
+postgres  2026-10-04 06:00  FAILED  4s        0 B        before hook: "pg_dumpall ...": exit status 1
+mysql     never             -       -         -
+```
+
+The same data is in `/var/lib/nobackups/status/<job>.json`, which works well with your monitoring agent's file checks.
+
+## Manual runs
+
+```bash
+sudo nobackups run postgres       # one job
+sudo nobackups run --all          # everything
+```
+
+Manual runs and scheduled runs share the same lock. If the daemon is mid-backup of a job, a manual run of that job exits with "job is already running".
+
+## Upgrading
+
+Run the installer again. It keeps your config and restarts the running service on the new version:
+
+```bash
+cd NoBackups && git pull && sudo ./install.sh
+nobackups version
+```
+
+See [Installation](/installation#upgrading) for the other methods.
+
+Snapshots are plain tar + zstd/gzip + age files whose format is recorded in the file name, so they stay readable across upgrades, and with stock tools if it ever comes to that.
+
+## Fleet tips
+
+- Use `prefix: servers/{hostname}` so every server can share one bucket and config template.
+- Give each server its own S3 credentials, scoped to its prefix if your provider supports it, so one compromised server can't touch the others' backups.
+- Enable bucket versioning or object lock where available, as protection against ransomware deleting backups with stolen credentials.

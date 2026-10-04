@@ -1,0 +1,85 @@
+---
+title: "Encryption"
+description: "Encrypt snapshots before they leave the server, with age."
+icon: "lock"
+---
+
+With `encryption` set, snapshots are encrypted with [age](https://age-encryption.org) before upload, using ChaCha20-Poly1305 with a key derived from your passphrase or public keys. Your storage provider only ever sees ciphertext.
+
+Use **exactly one** of the three options below.
+
+<Tabs>
+  <Tab title="Passphrase">
+    The simplest option. The same passphrase encrypts and decrypts.
+
+    ```yaml
+    encryption:
+      passphrase: ${BACKUP_PASSPHRASE}
+    ```
+
+    Or read it from a file:
+
+    ```yaml
+    encryption:
+      passphrase_file: /etc/nobackups/passphrase
+    ```
+
+    Passphrases are stretched with scrypt, which deliberately takes about a second per run. That's normal, not a hang.
+  </Tab>
+  <Tab title="Public keys (recipients)">
+    The server only holds **public** keys, so it can create backups but can't read them. Even someone who fully compromises the server can't decrypt your history.
+
+    Generate a key pair on a trusted machine (not the server):
+
+    ```bash
+    age-keygen -o backup-key.txt
+    # Public key: age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs3290gq
+    ```
+
+    ```yaml
+    encryption:
+      recipients:
+        - age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs3290gq
+        - age1...   # a second key, e.g. held by a colleague
+    ```
+
+    To restore, provide the private key with `--identity` or `identity_file`:
+
+    ```bash
+    nobackups restore system --target /tmp/r --identity ./backup-key.txt
+    ```
+  </Tab>
+</Tabs>
+
+## Options
+
+<ParamField path="passphrase" type="string">
+  Use `${VAR}` so the passphrase lives in `nobackups.env`, not the config.
+</ParamField>
+
+<ParamField path="passphrase_file" type="string">
+  File containing the passphrase. Trailing newlines are trimmed.
+</ParamField>
+
+<ParamField path="recipients" type="string[]">
+  age X25519 public keys (`age1...`). Each key can decrypt independently.
+</ParamField>
+
+<ParamField path="identity_file" type="string">
+  Private key file used **only for restores** of recipient-encrypted jobs. Typically you set this on the machine you restore from, not on the server doing the backups.
+</ParamField>
+
+<Warning>
+  **Lose the key, lose the backups.** There's no recovery mechanism, by design. Keep the passphrase or private key in a password manager or other offsite location, and test a restore with it.
+</Warning>
+
+## Changing keys
+
+Encryption settings are only used for new snapshots. Each snapshot's extension (`.age`) tells restore it needs decrypting, so you can rotate passphrases or keys at any time. Just keep the old key until the snapshots made with it have aged out of retention.
+
+## Decrypting without NoBackups
+
+```bash
+age -d snapshot.tar.zst.age > snapshot.tar.zst               # prompts for the passphrase
+age -d -i backup-key.txt snapshot.tar.zst.age > snapshot.tar.zst
+```

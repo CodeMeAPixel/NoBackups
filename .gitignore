@@ -1,0 +1,5 @@
+/nobackups
+/dist/
+/.demo/
+coverage.out
+coverage.html

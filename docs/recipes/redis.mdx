@@ -1,0 +1,32 @@
+---
+title: "Redis / Valkey"
+description: "Fresh RDB snapshots without stopping the server."
+icon: "bolt"
+---
+
+*In-memory, not out of mind.*
+
+`redis-cli --rdb` asks the server for a fresh snapshot and writes it locally:
+
+```yaml
+- name: redis
+  sources: [/var/backups/nobackups/redis]
+  destinations: [offsite]
+  schedule: "0 * * * *"
+  hooks:
+    before:
+      - |
+        set -eu
+        umask 077
+        mkdir -p /var/backups/nobackups/redis
+        redis-cli --rdb /var/backups/nobackups/redis/dump.rdb
+        # with a password: REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --rdb ...
+        # docker (Redis 7+): docker exec my-redis redis-cli --rdb - > /var/backups/nobackups/redis/dump.rdb
+    after:
+      - rm -f /var/backups/nobackups/redis/dump.rdb
+  retention: { keep_last: 48 }
+```
+
+## Restore
+
+stop Redis, copy `dump.rdb` into its data directory (`/var/lib/redis`), start Redis.

@@ -1,0 +1,145 @@
+---
+title: "Notifications"
+description: "No news is suspicious news. Get told when backups fail, wobble or succeed."
+icon: "bell"
+---
+
+Every run ends in one of three **events**:
+
+| Event | Meaning |
+|---|---|
+| `success` | Backup completed and uploaded everywhere |
+| `warning` | Backup completed, but some files couldn't be read and were skipped or truncated |
+| `failure` | Something went wrong: a hook failed, a destination failed, the run timed out, … |
+
+Targets can be set **globally** (top-level `notify:`, applies to every job) and **per job** (`notify:` inside a job, in addition to the global ones). Each target picks the events it wants with `on`. Subscribing to `success` also delivers warnings.
+
+## Discord
+
+<Steps>
+  <Step title="Create a webhook">
+    In Discord: **Server Settings → Integrations → Webhooks → New Webhook**. Pick the channel, then **Copy Webhook URL**.
+  </Step>
+  <Step title="Store the URL as a secret">
+    ```bash /etc/nobackups/nobackups.env
+    DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/123/abc
+    ```
+  </Step>
+  <Step title="Add it to your config">
+    ```yaml
+    notify:
+      discord:
+        - url: ${DISCORD_WEBHOOK_URL}
+          on: [failure, warning]
+          mention: "@here"
+    ```
+  </Step>
+  <Step title="Test it">
+    ```bash
+    nobackups test-notify --event failure
+    ```
+  </Step>
+</Steps>
+
+Messages are colour-coded embeds (green ✅, yellow ⚠️, red ❌). Each one shows the host, duration, file count, original → stored size, and every destination's result, including how many old snapshots were pruned. Failures include the error message.
+
+<ParamField path="url" type="string" required>
+  The Discord webhook URL. Must be `https://`.
+</ParamField>
+
+<ParamField path="on" type="string[]" default="[failure, warning]">
+  Events to send. Add `success` to hear about every run.
+</ParamField>
+
+<ParamField path="mention" type="string">
+  Prepended to failure and warning messages to ping people: `@here`, `@everyone`, a role (`<@&ROLE_ID>`) or a user (`<@USER_ID>`). Success messages never ping.
+</ParamField>
+
+<ParamField path="username" type="string" default="NoBackups">
+  Display name for the webhook messages.
+</ParamField>
+
+### Per-job targets
+
+Send a team's backups to their own channel, on top of the global targets:
+
+```yaml
+notify:
+  discord:
+    - url: ${DISCORD_OPS_WEBHOOK}          # every job's failures
+
+jobs:
+  - name: postgres
+    # ...
+    notify:
+      discord:
+        - url: ${DISCORD_DB_TEAM_WEBHOOK}  # this job only
+          on: [failure, success]
+          mention: "<@&123456789012345678>"
+```
+
+## Generic webhooks
+
+For anything that accepts a JSON POST: Slack, Mattermost, ntfy, n8n, healthchecks.io, your own endpoint…
+
+```yaml
+notify:
+  webhooks:
+    - url: https://hooks.example.com/backup
+      on: [failure]            # default
+```
+
+<ParamField path="url" type="string" required>
+  `http://` or `https://`.
+</ParamField>
+
+<ParamField path="on" type="string[]" default="[failure]" />
+
+The payload contains the event, a human-readable `text` (shown as-is by Slack and Mattermost incoming webhooks), and the full result:
+
+```json
+{
+  "event": "failure",
+  "text": "❌ NoBackups: job \"postgres\" on db01 failed: upload failed for: hetzner",
+  "content": "❌ NoBackups: job \"postgres\" on db01 failed: upload failed for: hetzner",
+  "job": "postgres",
+  "host": "db01",
+  "success": false,
+  "error": "upload failed for: hetzner",
+  "started": "2026-10-04T03:15:00Z",
+  "finished": "2026-10-04T03:16:12Z",
+  "duration": "1m12s",
+  "files": 3,
+  "bytes": 1073741824,
+  "stored_bytes": 201326592,
+  "warnings": 0,
+  "destinations": [
+    { "destination": "hetzner", "error": "connection reset by peer" },
+    { "destination": "nas", "key": "postgres/postgres-20261004T031500Z.tar.zst", "pruned": ["postgres/postgres-20260927T031500Z.tar.zst"] }
+  ]
+}
+```
+
+## Dead man's switch
+
+A failure message can't tell you that backups have **stopped running altogether** (server down, daemon disabled, …). Point a `success` webhook at a dead man's switch service such as healthchecks.io, which alerts you when the ping doesn't arrive on time:
+
+```yaml
+notify:
+  webhooks:
+    - url: https://hc-ping.com/your-uuid
+      on: [success]
+```
+
+## Testing
+
+```bash
+nobackups test-notify                         # global targets, simulated failure
+nobackups test-notify postgres --event success  # global + postgres's targets
+```
+
+This sends a sample result to every target, ignoring their `on` filters.
+
+<Note>
+  Delivery problems are logged but never fail the backup. A rate-limited request (HTTP 429) is retried once.
+</Note>

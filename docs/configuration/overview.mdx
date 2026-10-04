@@ -1,0 +1,96 @@
+---
+title: "Configuration overview"
+description: "One YAML file, one env file, zero mystery."
+icon: "sliders"
+---
+
+NoBackups reads a single YAML file, by default `/etc/nobackups/config.yaml`. Override it with `-c path` or the `NOBACKUPS_CONFIG` environment variable.
+
+The file has four parts:
+
+```yaml
+# 1. Global settings (all optional)
+state_dir: /var/lib/nobackups
+log_level: info
+
+# 2. Where backups go
+destinations:
+  hetzner: { type: s3, ... }
+
+# 3. What to back up
+jobs:
+  - name: system
+    ...
+
+# 4. Who to tell (optional)
+notify:
+  discord: [ ... ]
+```
+
+<CardGroup cols={3}>
+  <Card title="Destinations" icon="bucket" href="/configuration/destinations" />
+  <Card title="Jobs" icon="list-check" href="/configuration/jobs" />
+  <Card title="Notifications" icon="bell" href="/configuration/notifications" />
+</CardGroup>
+
+## Secrets and environment variables
+
+Any value can reference an environment variable:
+
+| Syntax | Meaning |
+|---|---|
+| `${VAR}` | Value of `VAR`. If `VAR` isn't set, loading the config **fails**, so a typo can't silently leave a credential empty. |
+| `${VAR:-default}` | Value of `VAR`, or `default` if it isn't set |
+
+Variables come from the process environment, and from **`nobackups.env` in the same directory as the config file**. That file is loaded automatically by every command, so manual runs and the daemon see the same secrets:
+
+```bash /etc/nobackups/nobackups.env
+# KEY=VALUE, one per line. Quotes are optional; `export ` prefixes are allowed.
+HETZNER_ACCESS_KEY=AKIA...
+HETZNER_SECRET_KEY="s3cr3t"
+BACKUP_PASSPHRASE='correct horse battery staple'
+```
+
+Variables already set in the environment take precedence over the file. Expansion only applies to YAML values, never to comments.
+
+<Warning>
+  Keep both files `chmod 600` and owned by root. The installer does this for you.
+</Warning>
+
+<Tip>
+  Inside hook commands, use plain `$VAR` for shell variables (e.g. `$MYSQL_ROOT_PASSWORD`). Only the `${VAR}` form is expanded by NoBackups when the config loads.
+</Tip>
+
+## Global settings
+
+<ParamField path="state_dir" type="string" default="/var/lib/nobackups">
+  Where per-job lock files and last-run status files are kept.
+</ParamField>
+
+<ParamField path="log_level" type="string" default="info">
+  `debug`, `info`, `warn` or `error`. The `-v` flag forces `debug` for a single command.
+</ParamField>
+
+<ParamField path="hostname" type="string" default="the machine's hostname">
+  Used in notifications and substituted for `{hostname}` in destination prefixes.
+</ParamField>
+
+## Validating
+
+```bash
+nobackups validate
+```
+
+Every problem is reported at once (unknown destinations, bad cron expressions, relative paths, conflicting encryption settings, …) rather than one per run.
+
+## Reloading
+
+The daemon re-reads the config on `SIGHUP`:
+
+```bash
+sudo systemctl reload nobackups
+```
+
+If the new config is invalid, the error is logged and the daemon keeps running with the old one.
+
+See the [full config reference](/reference/config) for every option in one annotated file.

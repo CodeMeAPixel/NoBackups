@@ -1,0 +1,116 @@
+---
+title: "Restoring"
+description: "The part everyone forgets to test. Don't be everyone."
+icon: "clock-rotate-left"
+---
+
+## Find a snapshot
+
+```bash
+nobackups snapshots system
+```
+
+```text
+DESTINATION  SNAPSHOT          TIME                 SIZE     ENCRYPTED
+hetzner      20261004T031500Z  2026-10-04 03:15:00  1.2 GiB  true
+hetzner      20261003T031500Z  2026-10-03 03:15:00  1.2 GiB  true
+nas          20261004T031500Z  2026-10-04 03:15:00  1.2 GiB  true
+```
+
+Use `--dest name` to list a single destination.
+
+## Restore
+
+```bash
+nobackups restore system --target /tmp/restore
+```
+
+By default this restores the **latest** snapshot from the job's **first** destination. Archives keep absolute paths without the leading `/`, so `/etc/nginx` lands at `/tmp/restore/etc/nginx`.
+
+<ParamField path="--target" type="path" required>
+  Directory to restore into. Created if missing.
+</ParamField>
+
+<ParamField path="--snapshot" type="string" default="latest">
+  Snapshot ID (the timestamp from `snapshots`) or `latest`.
+</ParamField>
+
+<ParamField path="--dest" type="string" default="the job's first destination">
+  Destination to restore from.
+</ParamField>
+
+<ParamField path="--path" type="string">
+  Only restore entries at or below this archive path, e.g. `etc/nginx`. Repeatable.
+</ParamField>
+
+<ParamField path="--identity" type="path">
+  age private key for jobs encrypted to `recipients`. Overrides `encryption.identity_file`.
+</ParamField>
+
+## Common scenarios
+
+<AccordionGroup>
+  <Accordion title="Get one file back" icon="file">
+    ```bash
+    nobackups restore system --target /tmp/r --path etc/nginx/sites-available/app.conf
+    cp /tmp/r/etc/nginx/sites-available/app.conf /etc/nginx/sites-available/
+    ```
+  </Accordion>
+  <Accordion title="Roll back a directory to last Tuesday" icon="calendar">
+    ```bash
+    nobackups snapshots system                       # find Tuesday's ID
+    nobackups restore system --target / --path etc/nginx --snapshot 20260929T031500Z
+    ```
+
+    <Warning>
+      `--target /` overwrites live files in place. Restore to a scratch directory first if you're not sure.
+    </Warning>
+  </Accordion>
+  <Accordion title="Restore from a different destination" icon="right-left">
+    ```bash
+    nobackups restore system --target /tmp/r --dest nas
+    ```
+  </Accordion>
+  <Accordion title="Rebuild a dead server" icon="hammer">
+    1. Install NoBackups on the new server ([Installation](/installation)).
+    2. Copy over `config.yaml` and `nobackups.env` (you did keep those somewhere other than the dead server, right?). Set `hostname:` to the **old** server's name if your prefixes use `{hostname}`.
+    3. Restore:
+
+    ```bash
+    nobackups restore system --target /
+    ```
+
+    4. Restore databases from their dumps (see each [recipe](/recipes/overview) for the restore command).
+    5. Remove the `hostname:` override and enable the service.
+  </Accordion>
+  <Accordion title="Restore on a different machine" icon="laptop">
+    Any machine with the config (or just the destination and encryption settings) can restore. For recipient-encrypted jobs, keep the private key on your workstation, not on servers:
+
+    ```bash
+    nobackups -c ./config.yaml restore system --target ./r --identity ~/backup-key.txt
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## What gets restored
+
+- File contents, permissions, modification times and symlinks. Hard-linked files come back as separate copies.
+- Ownership, plus device nodes, **when running as root**. Otherwise files are owned by the restoring user.
+- Directories get their metadata applied last, so read-only directories don't block restoring their contents.
+
+Paths that would escape `--target` (e.g. `../`) are refused.
+
+## Without NoBackups
+
+Snapshots are plain tar + zstd/gzip + age files, so stock tools work too:
+
+```bash
+# download with any S3 client, then:
+age -d snapshot.tar.zst.age | zstd -d | tar -x -C /tmp/restore
+```
+
+## Test your restores
+
+<Tip>
+  Put a restore drill in the calendar. Pick a snapshot, restore it to a scratch directory, and check the files (and database dumps) are what you expect. A backup you've never restored is a hypothesis.
+</Tip>

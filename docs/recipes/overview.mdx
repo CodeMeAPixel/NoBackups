@@ -1,0 +1,35 @@
+---
+title: "Recipes"
+description: "Copy-paste job configs for common workloads, prepped and ready to serve."
+icon: "book-open"
+---
+
+Each recipe is a job to paste under `jobs:` in your config. They assume a destination named `offsite`, so rename it to match yours. Every example passes `nobackups validate`.
+
+<CardGroup cols={3}>
+  <Card title="Docker" icon="docker" href="/recipes/docker" />
+  <Card title="PostgreSQL" icon="database" href="/recipes/postgresql" />
+  <Card title="MySQL / MariaDB" icon="database" href="/recipes/mysql" />
+  <Card title="MongoDB" icon="leaf" href="/recipes/mongodb" />
+  <Card title="Redis / Valkey" icon="bolt" href="/recipes/redis" />
+  <Card title="SQLite" icon="feather" href="/recipes/sqlite" />
+  <Card title="VirtFusion" icon="cloud" href="/recipes/virtfusion" />
+  <Card title="Whole server" icon="hard-drive" href="/recipes/whole-server" />
+  <Card title="Web & mail" icon="globe" href="/recipes/web-and-mail" />
+</CardGroup>
+
+## Rule zero: don't copy a moving target
+
+Copying the files of a running database gives you a backup that may not restore. The pattern used throughout these recipes:
+
+1. A `before` hook writes a consistent **dump** (or stops/pauses the service) into a staging directory such as `/var/backups/nobackups/<job>`.
+2. NoBackups archives that directory.
+3. An `after` hook deletes the dump (or restarts the service). `after` hooks **always run**, even if the backup failed, so services never stay stopped.
+
+Some rules for hooks:
+
+- Each list item runs as its own `sh -c` command, and any failure aborts the job. For a multi-line script (`- |`), **start it with `set -eu`**, otherwise only the last line's exit code counts.
+- Dumps are written to local disk first, so the staging directory needs room for one dump. Compression and encryption happen on the way out.
+- Create the staging directory with `umask 077` so dumps (which contain all your data) are readable by root only.
+
+See [Hooks](/configuration/hooks) for the full details of how hooks run.

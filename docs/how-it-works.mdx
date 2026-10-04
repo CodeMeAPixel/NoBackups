@@ -1,0 +1,77 @@
+---
+title: "How it works"
+description: "What happens between 'schedule fires' and 'snapshot stored', and what a snapshot looks like at rest."
+icon: "gears"
+---
+
+## The pipeline
+
+Every run of a job goes through the same steps:
+
+<Steps>
+  <Step title="Lock">
+    The job takes an exclusive lock in `state_dir`, so a scheduled run and a manual `nobackups run` never back up the same job at once. If the job is already running, the new run is skipped and logged.
+  </Step>
+  <Step title="Before hooks">
+    Your `hooks.before` commands run, e.g. a database dump. If one fails, the run is aborted.
+  </Step>
+  <Step title="Archive → compress → encrypt → stream">
+    Sources are walked and written as a tar stream, compressed (zstd by default), encrypted with age if configured, and streamed straight to **every destination in parallel**. Nothing is staged on local disk.
+  </Step>
+  <Step title="Retention">
+    For each destination that received the snapshot, snapshots outside the retention policy are deleted.
+  </Step>
+  <Step title="After hooks">
+    `hooks.after` always run, whether the backup succeeded or not, so stopped services always come back.
+  </Step>
+  <Step title="Report">
+    The result is written to `state_dir/status/<job>.json` and sent to your notification targets.
+  </Step>
+</Steps>
+
+## Multiple destinations
+
+The archive is produced once and fanned out to all of the job's destinations at the same time. If one destination fails mid-upload, it drops out and the others carry on. The job is then reported as failed, naming the destination that didn't make it.
+
+That makes the "2" and the "1" in 3-2-1 one line of config:
+
+```yaml
+destinations: [hetzner, nas]
+```
+
+## Memory and disk
+
+- **Disk**: none beyond what your hooks write (e.g. a database dump).
+- **Memory**: about `part_size_mb` (default 64 MB) per S3 destination, for the multipart upload buffer.
+- **Speed**: the slowest destination sets the pace for all of them.
+
+## Storage layout
+
+Snapshots are stored as:
+
+```text
+<bucket>/<prefix>/<job>/<job>-<UTC timestamp>.tar[.zst|.gz][.age]
+```
+
+For example:
+
+```text
+my-backups/servers/web01/system/system-20261004T031500Z.tar.zst.age
+```
+
+The timestamp is the snapshot ID you use with `--snapshot`. Compression and encryption are recorded in the extension, so a restore always knows how to unpack a snapshot, even if you've changed the job's settings since.
+
+## No lock-in, no lock-out
+
+Each snapshot is a standard, self-contained file: a tar archive, compressed with zstd or gzip, encrypted with [age](https://age-encryption.org). You can recover with stock tools, without NoBackups:
+
+```bash
+age -d system-20261004T031500Z.tar.zst.age | zstd -d | tar -x -C /tmp/restore
+```
+
+## File handling details
+
+- Paths are stored as absolute paths without the leading `/`, like GNU tar does. Parent directories are included so restores recreate ownership and modes.
+- Ownership, permissions, mtimes and symlinks are preserved. Hard-linked files are stored as separate copies. Device nodes are stored too. Sockets and named pipes are skipped.
+- Files that disappear during the walk are skipped silently. Files that can't be read, or that shrink while being read, are recorded as **warnings**. The run still succeeds, but you'll get a `warning` notification.
+- With `one_file_system: true`, the walk doesn't descend into other mounted filesystems (`/proc`, NFS, Docker overlays, etc.).

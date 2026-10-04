@@ -1,0 +1,59 @@
+---
+title: "Hooks"
+description: "Run commands before and after a backup: dump databases, pause containers, tidy up."
+icon: "link"
+---
+
+```yaml
+hooks:
+  before:
+    - mkdir -p /var/backups/nobackups/postgres
+    - sudo -u postgres pg_dumpall > /var/backups/nobackups/postgres/all.sql
+  after:
+    - rm -f /var/backups/nobackups/postgres/all.sql
+```
+
+## How hooks run
+
+- Each list item runs as its own `/bin/sh -c` command, as root, one after another.
+- **`before`**: if any command exits non-zero, the backup is aborted and reported as failed.
+- **`after`**: **always** runs, even if the backup or a before hook failed, so stopped services always come back. A failing after hook marks a successful run as failed.
+- Hook output is captured into the log.
+- Before hooks count toward the job's `timeout`. After hooks are never cut off by it, so cleanup always gets to finish.
+
+## Environment
+
+| Variable | Value |
+|---|---|
+| `NOBACKUPS_JOB` | The job name |
+| `NOBACKUPS_HOST` | The hostname |
+| `NOBACKUPS_STATUS` | `success` or `failure` (after hooks only) |
+
+```yaml
+after:
+  - '[ "$NOBACKUPS_STATUS" = success ] && touch /var/run/last-good-backup || true'
+```
+
+## Multi-line scripts
+
+Use a YAML block scalar for longer scripts. **Start them with `set -eu`**: `sh -c` only reports the exit code of the *last* line, so without it a failed dump on line 2 would go unnoticed.
+
+```yaml
+before:
+  - |
+    set -eu
+    umask 077
+    mkdir -p /var/backups/nobackups/mysql
+    mysqldump --defaults-extra-file=/root/.my.cnf --all-databases --single-transaction \
+      > /var/backups/nobackups/mysql/all.sql
+```
+
+<Tip>
+  Use `umask 077` when writing dumps. They contain all your data, so only root should be able to read them.
+</Tip>
+
+<Note>
+  `${VAR}` inside a hook is expanded by NoBackups when the config loads, which is handy for secrets from `nobackups.env`. Plain `$VAR` is left for the shell at run time.
+</Note>
+
+See the [recipes](/recipes/overview) for ready-made hooks for common databases and Docker.

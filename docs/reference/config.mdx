@@ -1,0 +1,161 @@
+---
+title: "Config reference"
+description: "Every option in one annotated file. This is exactly what `nobackups init` writes."
+icon: "file-code"
+---
+
+Generate this file on any machine with:
+
+```bash
+nobackups init -c ./config.yaml
+```
+
+Option-by-option docs: [global settings](/configuration/overview#global-settings), [destinations](/configuration/destinations), [jobs](/configuration/jobs), [encryption](/configuration/encryption), [retention](/configuration/retention), [hooks](/configuration/hooks), [notifications](/configuration/notifications).
+
+```yaml config.yaml
+# NoBackups configuration
+#
+# Any value can reference environment variables as ${VAR} or ${VAR:-default}.
+# Variables are also loaded from nobackups.env next to this file, so keep
+# secrets there (chmod 600) instead of in this file.
+
+# Where locks and last-run status files are kept.
+state_dir: /var/lib/nobackups
+# debug | info | warn | error
+log_level: info
+# Defaults to the machine's hostname. Usable as {hostname} in prefixes.
+# hostname: web01
+
+# ---------------------------------------------------------------------------
+# Destinations: where backups go. Give each one a name, then reference it
+# from jobs. Every S3-compatible store uses type: s3.
+# ---------------------------------------------------------------------------
+destinations:
+  # Hetzner Object Storage (endpoints: fsn1 / nbg1 / hel1 .your-objectstorage.com)
+  hetzner:
+    type: s3
+    endpoint: fsn1.your-objectstorage.com
+    region: fsn1
+    bucket: my-backups
+    access_key_id: ${HETZNER_ACCESS_KEY}
+    secret_access_key: ${HETZNER_SECRET_KEY}
+    prefix: servers/{hostname}
+
+  # Self-hosted RustFS / MinIO / Garage / Alarik etc. Self-hosted stores
+  # usually need path_style: true. Use http:// for plain HTTP.
+  # rustfs:
+  #   type: s3
+  #   endpoint: http://rustfs.internal:9000
+  #   bucket: backups
+  #   access_key_id: ${RUSTFS_ACCESS_KEY}
+  #   secret_access_key: ${RUSTFS_SECRET_KEY}
+  #   path_style: true
+  #   prefix: "{hostname}"
+  #   # ca_file: /etc/nobackups/rustfs-ca.pem   # private CA for HTTPS
+  #   # insecure_skip_verify: false            # last resort for self-signed certs
+
+  # AWS S3
+  # aws:
+  #   type: s3
+  #   endpoint: s3.eu-central-1.amazonaws.com
+  #   region: eu-central-1
+  #   bucket: my-backups
+  #   access_key_id: ${AWS_ACCESS_KEY_ID}
+  #   secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+  #   storage_class: STANDARD_IA
+
+  # A local directory, e.g. a second disk or NFS mount.
+  # local:
+  #   type: local
+  #   path: /mnt/backup
+  #   prefix: "{hostname}"
+
+  # Optional for any s3 destination:
+  #   part_size_mb: 64   # multipart chunk size; max object size = 10000 x this.
+  #                      # Memory use is roughly part_size_mb per destination.
+
+# ---------------------------------------------------------------------------
+# Jobs: what to back up, when, and where.
+# ---------------------------------------------------------------------------
+jobs:
+  - name: system
+    sources:
+      - /etc
+      - /root
+      - /home
+    # Patterns without "/" match file/dir names anywhere; patterns with "/"
+    # match full paths (and everything below them).
+    exclude:
+      - "*.tmp"
+      - "*.swp"
+      - ".cache"
+      - "node_modules"
+      - /home/*/Downloads
+    destinations: [hetzner]
+    # Cron (minute hour day month weekday) or @hourly / @daily / "@every 6h".
+    # Omit to only run manually with `nobackups run system`.
+    schedule: "15 3 * * *"
+    # zstd (default) | gzip | none
+    compression: zstd
+    # compression_level: 3
+    # Don't descend into other mounted filesystems (e.g. /proc, NFS mounts).
+    one_file_system: true
+    # Encrypt with age before upload. Use ONE of passphrase, passphrase_file
+    # or recipients (age public keys). Lose the key = lose the backups.
+    encryption:
+      passphrase: ${BACKUP_PASSPHRASE}
+    # Keep a snapshot if it is one of the newest keep_last OR younger than
+    # keep_days. Omit both to keep everything.
+    retention:
+      keep_last: 7
+      keep_days: 30
+    # Abort the run if it takes longer than this.
+    timeout: 6h
+    # Optional per-job notifications, sent in addition to the global ones
+    # below. Events: success, warning (some files unreadable), failure.
+    # notify:
+    #   discord:
+    #     - url: ${DISCORD_WEBHOOK_URL}
+    #       on: [failure, warning]      # default
+    #       mention: "<@&123456789>"    # optional role/user ping on failure/warning
+
+  # Example: dump a database first, back up the dump, then remove it.
+  # - name: postgres
+  #   sources: [/var/backups/postgres]
+  #   destinations: [hetzner, local]
+  #   schedule: "@every 6h"
+  #   hooks:
+  #     before:
+  #       - mkdir -p /var/backups/postgres
+  #       - sudo -u postgres pg_dumpall > /var/backups/postgres/all.sql
+  #     after:   # always runs; $NOBACKUPS_STATUS is success or failure
+  #       - rm -f /var/backups/postgres/all.sql
+  #   encryption:
+  #     recipients:
+  #       - age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs3290gq
+  #     # Private key, only needed on the machine you restore from:
+  #     # identity_file: /root/backup-key.txt
+  #   retention:
+  #     keep_last: 28
+
+# ---------------------------------------------------------------------------
+# Notifications for every job. Jobs can add their own under `notify:` too.
+# Events: success | warning (backup ok, some files unreadable) | failure.
+# Subscribing to success also delivers warnings.
+# Test with: nobackups test-notify [job] --event failure
+# ---------------------------------------------------------------------------
+# notify:
+#   # Discord: rich embed with status colour, host, size, duration,
+#   # per-destination results and the error message.
+#   discord:
+#     - url: ${DISCORD_WEBHOOK_URL}   # Server Settings → Integrations → Webhooks
+#       on: [failure, warning]       # default; add success for every run
+#       mention: "@here"             # optional; only used for failure/warning
+#       # username: Backups          # default: NoBackups
+#
+#   # Generic JSON webhooks (Slack, Mattermost, ntfy, n8n, healthchecks.io...).
+#   # The payload has event, text and the full result. Default on: [failure].
+#   webhooks:
+#     - url: https://hooks.slack.com/services/XXX
+#       on: [failure]
+```

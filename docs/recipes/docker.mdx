@@ -1,0 +1,72 @@
+---
+title: "Docker"
+description: "Volumes, bind mounts and compose files, with or without downtime."
+icon: "docker"
+---
+
+*Contain your enthusiasm (and your volumes).*
+
+## Stop, copy, start
+
+The simplest consistent option: stop the stack, copy everything, start it again. Downtime lasts as long as the backup takes.
+
+```yaml
+- name: docker-app
+  sources:
+    - /opt/myapp                          # compose.yaml, .env, bind-mounted data
+    - /var/lib/docker/volumes/myapp_data  # named volume(s)
+  destinations: [offsite]
+  schedule: "0 4 * * *"
+  hooks:
+    before:
+      - docker compose -f /opt/myapp/compose.yaml stop
+    after:
+      - docker compose -f /opt/myapp/compose.yaml start
+  retention: { keep_last: 14 }
+```
+
+## Live, without downtime
+
+For containers that only hold plain files (uploads, configs, static sites), back up the volumes live. For containers running databases, dump the database out of the container instead (see the [database recipes](/recipes/overview)) and exclude its raw data directory.
+
+```yaml
+- name: docker-volumes
+  sources:
+    - /var/lib/docker/volumes
+    - /opt                                # wherever your compose projects live
+  exclude:
+    - /var/lib/docker/volumes/*postgres*  # dumped separately
+    - /var/lib/docker/volumes/*mysql*
+    - /var/lib/docker/volumes/*mariadb*
+    - /var/lib/docker/volumes/backingFsBlockDev
+  destinations: [offsite]
+  schedule: "30 3 * * *"
+  hooks:
+    before:
+      # Record each container's config so you know how to recreate it
+      - |
+        set -eu
+        umask 077
+        mkdir -p /var/backups/nobackups/docker
+        docker ps -aq | xargs -r docker inspect > /var/backups/nobackups/docker/containers.json
+        docker volume ls --format '{{.Name}}' > /var/backups/nobackups/docker/volumes.txt
+  retention: { keep_last: 7, keep_days: 30 }
+```
+
+<Tip>
+  Add `/var/backups/nobackups/docker` to `sources` if you want those inspect files included.
+</Tip>
+
+## What not to back up
+
+<Warning>
+  Don't back up `/var/lib/docker` as a whole. Image layers and container filesystems are huge and can be re-pulled. Back up volumes, bind mounts and compose files. If you build custom images that aren't stored in a registry, save them with `docker save myimage:tag | zstd > /var/backups/nobackups/images/myimage.tar.zst`.
+</Warning>
+
+## Restore a volume
+
+```sh
+docker compose -f /opt/myapp/compose.yaml down
+nobackups restore docker-app --target / --path var/lib/docker/volumes/myapp_data
+docker compose -f /opt/myapp/compose.yaml up -d
+```

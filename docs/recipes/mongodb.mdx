@@ -1,0 +1,32 @@
+---
+title: "MongoDB"
+description: "mongodump archives, on the host or in Docker."
+icon: "leaf"
+---
+
+*No humongous downtime.*
+
+```yaml
+- name: mongodb
+  sources: [/var/backups/nobackups/mongodb]
+  destinations: [offsite]
+  schedule: "0 */6 * * *"
+  compression: none          # mongodump --gzip already compresses
+  hooks:
+    before:
+      - |
+        set -eu
+        umask 077
+        mkdir -p /var/backups/nobackups/mongodb
+        mongodump --uri="mongodb://backup:${MONGO_BACKUP_PASSWORD}@localhost:27017/?authSource=admin" \
+          --archive=/var/backups/nobackups/mongodb/dump.archive.gz --gzip
+        # on a replica set, add --oplog for a point-in-time consistent dump
+    after:
+      - rm -f /var/backups/nobackups/mongodb/dump.archive.gz
+```
+
+`${MONGO_BACKUP_PASSWORD}` is filled in from `nobackups.env` when the config loads. In Docker: `docker exec my-mongo mongodump --archive --gzip -u root -p "$PASS" > /var/backups/nobackups/mongodb/dump.archive.gz`.
+
+## Restore
+
+`mongorestore --archive=dump.archive.gz --gzip --drop`

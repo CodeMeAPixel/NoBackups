@@ -1,0 +1,47 @@
+---
+title: "Retention"
+description: "Keep what you need, let old snapshots go gracefully."
+icon: "broom"
+---
+
+```yaml
+retention:
+  keep_last: 7     # the 7 newest snapshots…
+  keep_days: 30    # …and anything newer than 30 days
+```
+
+A snapshot is **kept if it matches either rule**. Everything else is deleted.
+
+<ParamField path="keep_last" type="integer">
+  Keep the N most recent snapshots, however old they are.
+</ParamField>
+
+<ParamField path="keep_days" type="integer">
+  Keep every snapshot newer than N days.
+</ParamField>
+
+With neither set, nothing is ever deleted.
+
+## When it runs
+
+- After each successful upload, for each destination that received the new snapshot. A failed run never deletes anything from the destination that failed.
+- On demand with `nobackups prune [job...]`.
+
+## Safety rails
+
+- **The newest snapshot is never deleted**, even if a misconfigured policy would expire it.
+- Only files matching the job's own naming pattern (`<job>/<job>-<timestamp>.tar…`) are ever considered, so other files in the bucket are safe.
+- Each destination is pruned independently, based on what's actually stored there.
+
+## Examples
+
+| Policy | Result with daily backups |
+|---|---|
+| `keep_last: 7` | Exactly the last week |
+| `keep_days: 30` | The last month |
+| `keep_last: 7, keep_days: 30` | The last month, and never fewer than 7 snapshots, even if backups stop for a while |
+| `keep_last: 48` with `schedule: "@hourly"` | Two days of hourly snapshots |
+
+<Tip>
+  Want hourlies for a day plus dailies for a month? Make two jobs over the same sources: one `@hourly` with `keep_last: 24`, one `@daily` with `keep_days: 30`.
+</Tip>

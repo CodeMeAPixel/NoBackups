@@ -1,0 +1,32 @@
+[Unit]
+Description=NoBackups backup scheduler
+Documentation=https://github.com/codemeapixel/nobackups
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/nobackups -c /etc/nobackups/config.yaml daemon
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=30s
+# Runs as root so it can read everything it is asked to back up.
+User=root
+# Be a polite neighbour to production workloads.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+# Hardening that still allows reading the whole filesystem and running hooks.
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+StateDirectory=nobackups
+StateDirectoryMode=0700
+# Give a running upload time to abort cleanly on stop.
+TimeoutStopSec=60s
+
+[Install]
+WantedBy=multi-user.target

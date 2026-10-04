@@ -1,0 +1,34 @@
+---
+title: "Whole server"
+description: "A disaster-recovery job for everything that matters on a box."
+icon: "hard-drive"
+---
+
+*The "just take everything" button.*
+
+A "disaster recovery" job for a server without special workloads. `one_file_system` keeps it out of `/proc`, `/sys`, `/dev`, tmpfs and network mounts:
+
+```yaml
+- name: full
+  sources: [/]
+  one_file_system: true
+  exclude:
+    - /tmp
+    - /var/tmp
+    - /var/cache
+    - /var/lib/docker                 # back up volumes in a dedicated job instead
+    - /var/lib/containerd
+    - /var/lib/mysql                  # databases: use dumps instead
+    - /var/lib/postgresql
+    - /var/backups/nobackups          # staging area of other jobs
+    - /swapfile
+    - /home/*/.cache
+    - "*.log"
+  destinations: [offsite]
+  schedule: "0 1 * * 0"               # weekly
+  encryption:
+    passphrase: ${BACKUP_PASSPHRASE}
+  retention: { keep_last: 4 }
+```
+
+If `/home` or `/var` are separate filesystems, list them as extra sources, because `one_file_system` won't cross into them from `/`.

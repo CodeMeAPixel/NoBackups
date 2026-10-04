@@ -1,0 +1,77 @@
+---
+title: "Introduction"
+description: "Config-driven backups for Linux servers, to any S3-compatible storage. Because 'no backups' should be a punchline, not a status."
+icon: "hand-wave"
+---
+
+<Note>
+  **Tired of your team forgetting the most important rule in ops?** No, not "never deploy on a Friday". The *other* one: **3-2-1**. Three copies of your data, on two kinds of storage, with one offsite.
+</Note>
+
+NoBackups is named after the situation it gets you out of. It's one small static binary you drop on a Linux server. You tell it what matters and where to send it, and it handles the rest on a schedule. That way "so… does anyone have a backup?" stays a hypothetical, not something posted in the team chat at 3 AM.
+
+```yaml /etc/nobackups/config.yaml
+destinations:
+  hetzner:
+    type: s3
+    endpoint: fsn1.your-objectstorage.com
+    bucket: my-backups
+    access_key_id: ${HETZNER_ACCESS_KEY}
+    secret_access_key: ${HETZNER_SECRET_KEY}
+    prefix: servers/{hostname}
+
+jobs:
+  - name: system
+    sources: [/etc, /home, /root]
+    destinations: [hetzner]
+    schedule: "15 3 * * *"
+    encryption:
+      passphrase: ${BACKUP_PASSPHRASE}
+    retention: { keep_last: 7, keep_days: 30 }
+```
+
+## Start here
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    From zero to your first offsite backup in about five minutes.
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Clone and run one script on the server. Works from any OS.
+  </Card>
+  <Card title="Recipes" icon="book-open" href="/recipes/overview">
+    Copy-paste jobs for Docker, PostgreSQL, MySQL, MongoDB, Redis, VirtFusion and more.
+  </Card>
+  <Card title="Restoring" icon="clock-rotate-left" href="/guides/restoring">
+    The part everyone forgets to test. Don't be everyone.
+  </Card>
+</CardGroup>
+
+## What's in the box
+
+<CardGroup cols={2}>
+  <Card title="Any S3-compatible storage" icon="bucket">
+    Hetzner, RustFS, MinIO, Garage, Alarik, AWS, Backblaze B2, Cloudflare R2, plus local disks and NFS. Your data, your bucket list.
+  </Card>
+  <Card title="Many destinations, one pass" icon="arrows-split-up-and-left">
+    Each archive is built once and streamed to every destination in parallel. If one destination fails, the rest still finish.
+  </Card>
+  <Card title="Streams, never stages" icon="water">
+    Nothing is written to local disk first. Light enough for even the most *byte*-sized VPS.
+  </Card>
+  <Card title="Compressed & encrypted" icon="lock">
+    zstd or gzip, then age encryption with a passphrase or public keys. Squeezed, sealed, delivered.
+  </Card>
+  <Card title="Retention" icon="broom">
+    Keep the last N snapshots and/or everything newer than N days. Old snapshots are let go gracefully.
+  </Card>
+  <Card title="Hooks" icon="link">
+    Dump databases or pause containers before a backup, and clean up after.
+  </Card>
+  <Card title="Discord & webhooks" icon="bell">
+    Colour-coded alerts on failure, warning or success, globally or per job.
+  </Card>
+  <Card title="Boring to operate" icon="server">
+    systemd daemon, cron schedules, locking, a status command and config reload. Boring is a feature.
+  </Card>
+</CardGroup>

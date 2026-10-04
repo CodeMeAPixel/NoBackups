@@ -1,0 +1,28 @@
+---
+title: "SQLite"
+description: "Safe online copies for SQLite and the apps built on it."
+icon: "feather"
+---
+
+*Small database, big regrets if you lose it.*
+
+This also covers apps built on it: Vaultwarden, Gitea, Uptime Kuma, Home Assistant…
+
+Copying a live SQLite file can catch it mid-write. `sqlite3 .backup` makes a safe copy without stopping the app:
+
+```yaml
+- name: vaultwarden
+  sources:
+    - /opt/vaultwarden/data
+    - /var/backups/nobackups/vaultwarden   # the safe copy made by the hook
+  exclude: ["db.sqlite3*"]                 # live DB + WAL files from the data dir
+  destinations: [offsite]
+  schedule: "0 */4 * * *"
+  hooks:
+    before:
+      - |
+        set -eu
+        umask 077
+        mkdir -p /var/backups/nobackups/vaultwarden
+        sqlite3 /opt/vaultwarden/data/db.sqlite3 ".backup '/var/backups/nobackups/vaultwarden/vaultwarden.sqlite3'"
+```

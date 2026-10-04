@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 190 32" fill="none">
+  <rect x="3" y="6" width="26" height="22" rx="4" fill="#0F766E"/>
+  <rect x="3" y="4" width="26" height="7" rx="3" fill="#2DD4BF"/>
+  <path d="M10.5 18.5l4 4 7-8" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="38" y="24" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="21" font-weight="700" fill="#F0FDFA">No<tspan fill="#14B8A6">Backups</tspan></text>
+</svg>

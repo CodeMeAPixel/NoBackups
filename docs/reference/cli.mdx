@@ -1,0 +1,174 @@
+---
+title: "CLI"
+description: "Every command and flag."
+icon: "terminal"
+---
+
+```text
+nobackups [-c config] <command> [flags] [args]
+```
+
+## Global flags
+
+These work before or after the command.
+
+<ParamField path="-c, --config" type="path" default="$NOBACKUPS_CONFIG or /etc/nobackups/config.yaml">
+  Config file. `nobackups.env` is loaded from the same directory.
+</ParamField>
+
+<ParamField path="-v" type="boolean">
+  Debug logging for this command.
+</ParamField>
+
+Logs go to stderr; command output goes to stdout. The exit code is non-zero if anything failed.
+
+## Setup
+
+### install
+
+Install this binary, the config templates and the systemd unit. Needs root. If the service is already running, it's restarted on the new version. Existing config and env files are kept. `install.sh` uses this command under the hood.
+
+```bash
+sudo ./nobackups-linux-amd64 install
+nobackups install --root ./pkgroot --bin-dir /usr/bin
+```
+
+<ParamField path="--bin-dir" type="path" default="/usr/local/bin">Where to put the binary.</ParamField>
+<ParamField path="--config-dir" type="path" default="/etc/nobackups">Where `config.yaml` and `nobackups.env` live.</ParamField>
+<ParamField path="--unit-dir" type="path" default="/etc/systemd/system">Where to put the systemd unit.</ParamField>
+<ParamField path="--root" type="path">Install under this directory instead of `/`, for packaging. Skips `systemctl`.</ParamField>
+<ParamField path="--no-systemd" type="boolean">Don't run `systemctl`.</ParamField>
+
+### uninstall
+
+Stop and disable the service, then remove the binary and unit. Config, state and backups are kept. Takes the same flags as `install`.
+
+```bash
+sudo nobackups uninstall
+```
+
+### init
+
+Write the fully commented example config.
+
+```bash
+nobackups init                      # → /etc/nobackups/config.yaml
+nobackups -c ./config.yaml init --force
+```
+
+<ParamField path="--force" type="boolean">Overwrite an existing file.</ParamField>
+
+### validate
+
+Load and validate the config, reporting every problem at once.
+
+```bash
+nobackups validate
+# /etc/nobackups/config.yaml: OK (3 jobs, 2 destinations)
+```
+
+### check
+
+For each destination: verify the bucket exists (S3), then write, list and delete a small test object.
+
+```bash
+nobackups check
+```
+
+### list
+
+Show destinations, and each job's schedule, next run time, destinations and sources.
+
+```bash
+nobackups list
+```
+
+## Backing up
+
+### run
+
+Run jobs now, in order.
+
+```bash
+nobackups run system postgres
+nobackups run --all
+```
+
+<ParamField path="--all" type="boolean">Run every job.</ParamField>
+
+Fails with "job is already running" if the daemon (or another `run`) holds that job's lock.
+
+### daemon
+
+Run every job that has a `schedule`. This is what the systemd unit starts. `SIGHUP` reloads the config; `SIGINT`/`SIGTERM` cancel running jobs and exit.
+
+```bash
+nobackups daemon
+```
+
+### prune
+
+Apply retention now, without making a new backup.
+
+```bash
+nobackups prune            # all jobs
+nobackups prune postgres
+```
+
+## Restoring
+
+### snapshots
+
+List a job's snapshots, newest first.
+
+```bash
+nobackups snapshots system
+nobackups snapshots system --dest nas
+```
+
+<ParamField path="--dest" type="string">Only list this destination (default: all of the job's destinations).</ParamField>
+
+### restore
+
+Restore a snapshot into a directory. See [Restoring](/guides/restoring) for walkthroughs.
+
+```bash
+nobackups restore system --target /tmp/r
+nobackups restore system --target / --path etc/nginx --snapshot 20261001T031500Z --dest nas
+```
+
+<ParamField path="--target" type="path" required>Directory to restore into.</ParamField>
+<ParamField path="--snapshot" type="string" default="latest">Snapshot ID (timestamp) or `latest`.</ParamField>
+<ParamField path="--dest" type="string" default="the job's first destination">Destination to restore from.</ParamField>
+<ParamField path="--path" type="string">Only restore this archive path and below. Repeatable.</ParamField>
+<ParamField path="--identity" type="path">age private key file for recipient-encrypted jobs.</ParamField>
+
+## Monitoring
+
+### status
+
+Show each job's last run.
+
+```bash
+nobackups status
+nobackups status --json
+```
+
+<ParamField path="--json" type="boolean">Output the stored results as JSON.</ParamField>
+
+### test-notify
+
+Send a sample result to every notification target (global, plus the job's if you name one), ignoring their `on` filters.
+
+```bash
+nobackups test-notify
+nobackups test-notify postgres --event warning
+```
+
+<ParamField path="--event" type="string" default="failure">`success`, `warning` or `failure`.</ParamField>
+
+### version
+
+```bash
+nobackups version
+```

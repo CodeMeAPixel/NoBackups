@@ -1,0 +1,59 @@
+---
+title: "MySQL / MariaDB"
+description: "Consistent InnoDB dumps without locking, on the host or in Docker."
+icon: "database"
+---
+
+*Single transaction, zero drama.*
+
+## On the host
+
+`--single-transaction` gives a consistent dump of InnoDB tables without locking. Keep credentials in `/root/.my.cnf` (`chmod 600`), not on the command line:
+
+```ini
+# /root/.my.cnf
+[client]
+user=backup
+password=secret
+```
+
+```yaml
+- name: mysql
+  sources: [/var/backups/nobackups/mysql]
+  destinations: [offsite]
+  schedule: "0 */6 * * *"
+  hooks:
+    before:
+      - |
+        set -eu
+        umask 077
+        mkdir -p /var/backups/nobackups/mysql
+        mysqldump --defaults-extra-file=/root/.my.cnf --all-databases \
+          --single-transaction --quick --routines --triggers --events \
+          > /var/backups/nobackups/mysql/all.sql
+    after:
+      - rm -f /var/backups/nobackups/mysql/all.sql
+  retention: { keep_last: 28 }
+```
+
+On MariaDB 11+ the tool is called `mariadb-dump` (same flags).
+
+## In Docker
+
+The official images keep the root password in the container's environment:
+
+```yaml
+    before:
+      - |
+        set -eu
+        umask 077
+        mkdir -p /var/backups/nobackups/mysql
+        docker exec my-mysql sh -c 'exec mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --all-databases --single-transaction --routines --triggers --events' \
+          > /var/backups/nobackups/mysql/all.sql
+```
+
+(Use `$MARIADB_ROOT_PASSWORD` and `mariadb-dump` for the `mariadb` image.)
+
+## Restore
+
+`mysql --defaults-extra-file=/root/.my.cnf < /tmp/r/var/backups/nobackups/mysql/all.sql`
