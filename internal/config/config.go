@@ -71,7 +71,24 @@ type Job struct {
 	Timeout          Duration    `yaml:"timeout"`
 	Notify           Notify      `yaml:"notify"`
 	OneFileSystem    bool        `yaml:"one_file_system"`
+	Databases        []*Database `yaml:"databases"`
 }
+
+type Database struct {
+	Name      string   `yaml:"name"`
+	Type      string   `yaml:"type"`
+	Container string   `yaml:"container"`
+	Host      string   `yaml:"host"`
+	Port      int      `yaml:"port"`
+	User      string   `yaml:"user"`
+	Password  string   `yaml:"password"`
+	Database  string   `yaml:"database"`
+	AuthDB    string   `yaml:"auth_database"`
+	Path      string   `yaml:"path"`
+	Options   []string `yaml:"options"`
+}
+
+var DatabaseTypes = []string{"postgres", "mysql", "mariadb", "mongodb", "redis", "sqlite"}
 
 type Encryption struct {
 	Passphrase     string   `yaml:"passphrase"`
@@ -369,8 +386,51 @@ func (c *Config) Validate() error {
 			add("job %q: duplicate job name", j.Name)
 		}
 		seen[j.Name] = true
-		if len(j.Sources) == 0 {
-			add("job %s: at least one source is required", id)
+		if len(j.Sources) == 0 && len(j.Databases) == 0 {
+			add("job %s: at least one source or database is required", id)
+		}
+		dbNames := map[string]bool{}
+		for i, db := range j.Databases {
+			if db == nil {
+				add("job %s: database #%d is empty", id, i+1)
+				continue
+			}
+			where := fmt.Sprintf("job %s: database #%d", id, i+1)
+			if !slices.Contains(DatabaseTypes, db.Type) {
+				add("%s: type must be one of %s", where, strings.Join(DatabaseTypes, ", "))
+				continue
+			}
+			if db.Name == "" {
+				db.Name = db.Type
+				if db.Database != "" {
+					db.Name += "-" + db.Database
+				} else if db.Path != "" {
+					db.Name += "-" + strings.TrimSuffix(filepath.Base(db.Path), filepath.Ext(db.Path))
+				}
+			}
+			if !nameRe.MatchString(db.Name) {
+				add("%s: name %q may only contain letters, digits, '.', '_' and '-'", where, db.Name)
+			}
+			if dbNames[db.Name] {
+				add("%s: duplicate name %q; set name: to tell them apart", where, db.Name)
+			}
+			dbNames[db.Name] = true
+			if db.Port < 0 || db.Port > 65535 {
+				add("%s: invalid port %d", where, db.Port)
+			}
+			switch db.Type {
+			case "sqlite":
+				if db.Path == "" || !filepath.IsAbs(db.Path) {
+					add("%s: sqlite needs an absolute path to the database file", where)
+				}
+				if db.Container != "" {
+					add("%s: sqlite is dumped from the host; set path to the file instead of container", where)
+				}
+			case "redis":
+				if db.Database != "" {
+					add("%s: redis dumps the whole server; remove database", where)
+				}
+			}
 		}
 		for _, s := range j.Sources {
 			if !filepath.IsAbs(s) {

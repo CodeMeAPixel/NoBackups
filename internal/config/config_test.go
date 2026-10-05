@@ -151,3 +151,54 @@ jobs: [{name: j, sources: [/etc], destinations: [h]}]
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestDatabaseValidation(t *testing.T) {
+	good := `
+destinations: {d: {type: local, path: /tmp/x}}
+jobs:
+  - name: j
+    destinations: [d]
+    databases:
+      - {type: postgres, database: app}
+      - {type: postgres}
+      - {type: sqlite, path: /srv/data/app.db}
+      - {type: redis, container: cache}
+`
+	c, err := Parse([]byte(good), "test.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, db := range c.Jobs[0].Databases {
+		names = append(names, db.Name)
+	}
+	if strings.Join(names, ",") != "postgres-app,postgres,sqlite-app,redis" {
+		t.Errorf("default names: %v", names)
+	}
+
+	bad := `
+destinations: {d: {type: local, path: /tmp/x}}
+jobs:
+  - name: j
+    destinations: [d]
+    databases:
+      - {type: oracle}
+      - {type: sqlite, container: x}
+      - {type: redis, database: "0"}
+      - {type: mysql, database: shop}
+      - {type: mysql, database: shop}
+      - {type: postgres, port: 70000}
+  - name: empty
+    destinations: [d]
+`
+	_, err = Parse([]byte(bad), "test.yaml")
+	if err == nil {
+		t.Fatal("expected errors")
+	}
+	for _, want := range []string{"type must be one of postgres", "sqlite needs an absolute path", "sqlite is dumped from the host",
+		"redis dumps the whole server", `duplicate name "mysql-shop"`, "invalid port 70000", "at least one source or database"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("missing %q in:\n%v", want, err)
+		}
+	}
+}

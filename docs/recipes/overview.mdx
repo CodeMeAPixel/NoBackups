@@ -21,16 +21,11 @@ Each recipe is a job to paste under `jobs:` in your config. They assume a destin
 
 ## Rule zero: don't copy a moving target
 
-Copying the files of a running database gives you a backup that may not restore. The pattern used throughout these recipes:
+Copying the files of a running database gives you a backup that may not restore. Use a consistent dump instead:
 
-1. A `before` hook writes a consistent **dump** (or stops/pauses the service) into a staging directory such as `/var/backups/nobackups/<job>`.
-2. NoBackups archives that directory.
-3. An `after` hook deletes the dump (or restarts the service). `after` hooks **always run**, even if the backup failed, so services never stay stopped.
+- **Databases**: list them under [`databases`](/configuration/databases). NoBackups runs `pg_dump`, `mysqldump`, `mongodump`, `redis-cli --rdb` or `sqlite3 .backup` itself, on the host or inside a Docker container, and puts the dump in the snapshot. No scripting needed.
+- **Everything else** (an app's own export command, stopping a service while its files are copied): use [hooks](/configuration/hooks). A `before` hook prepares the data, and an `after` hook, which always runs, cleans up or restarts the service.
 
-Some rules for hooks:
-
-- Each list item runs as its own `sh -c` command, and any failure aborts the job. For a multi-line script (`- |`), **start it with `set -eu`**, otherwise only the last line's exit code counts.
-- Dumps are written to local disk first, so the staging directory needs room for one dump. Compression and encryption happen on the way out.
-- Create the staging directory with `umask 077` so dumps (which contain all your data) are readable by root only.
+For multi-line hook scripts, start with `set -eu`, otherwise only the last line's exit code counts.
 
 See [Hooks](/configuration/hooks) for the full details of how hooks run.

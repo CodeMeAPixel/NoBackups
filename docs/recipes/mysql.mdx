@@ -6,54 +6,51 @@ icon: "database"
 
 *Single transaction, zero drama.*
 
-## On the host
+NoBackups runs `mysqldump --single-transaction` (or `mariadb-dump`), which gives a consistent dump of InnoDB tables without locking them. Use `type: mariadb` for MariaDB: it uses `mariadb-dump`, which MariaDB 11 images ship instead of `mysqldump`.
 
-`--single-transaction` gives a consistent dump of InnoDB tables without locking. Keep credentials in `/root/.my.cnf` (`chmod 600`), not on the command line:
+<Tabs>
+  <Tab title="In Docker">
+    The official images keep the root password in an environment variable you already have, so reuse it in `nobackups.env`:
 
-```ini
-# /root/.my.cnf
-[client]
-user=backup
-password=secret
-```
+    ```yaml
+    - name: mysql
+      databases:
+        - type: mysql             # or mariadb
+          container: my-mysql
+          password: ${MYSQL_ROOT_PASSWORD}
+      destinations: [offsite]
+      schedule: "0 */6 * * *"
+      retention: { keep_last: 28 }
+    ```
+  </Tab>
+  <Tab title="On the host">
+    ```yaml
+    - name: mysql
+      databases:
+        - type: mysql
+          user: backup
+          password: ${MYSQL_BACKUP_PASSWORD}
+          database: shop          # leave out to dump all databases
+      destinations: [offsite]
+      schedule: "0 */6 * * *"
+      retention: { keep_last: 28 }
+    ```
 
-```yaml
-- name: mysql
-  sources: [/var/backups/nobackups/mysql]
-  destinations: [offsite]
-  schedule: "0 */6 * * *"
-  hooks:
-    before:
-      - |
-        set -eu
-        umask 077
-        mkdir -p /var/backups/nobackups/mysql
-        mysqldump --defaults-extra-file=/root/.my.cnf --all-databases \
-          --single-transaction --quick --routines --triggers --events \
-          > /var/backups/nobackups/mysql/all.sql
-    after:
-      - rm -f /var/backups/nobackups/mysql/all.sql
-  retention: { keep_last: 28 }
-```
+    A read-only backup user is enough:
 
-On MariaDB 11+ the tool is called `mariadb-dump` (same flags).
-
-## In Docker
-
-The official images keep the root password in the container's environment:
-
-```yaml
-    before:
-      - |
-        set -eu
-        umask 077
-        mkdir -p /var/backups/nobackups/mysql
-        docker exec my-mysql sh -c 'exec mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --all-databases --single-transaction --routines --triggers --events' \
-          > /var/backups/nobackups/mysql/all.sql
-```
-
-(Use `$MARIADB_ROOT_PASSWORD` and `mariadb-dump` for the `mariadb` image.)
+    ```sql
+    CREATE USER 'backup'@'localhost' IDENTIFIED BY '...';
+    GRANT SELECT, SHOW VIEW, TRIGGER, LOCK TABLES, EVENT ON *.* TO 'backup'@'localhost';
+    ```
+  </Tab>
+</Tabs>
 
 ## Restore
 
-`mysql --defaults-extra-file=/root/.my.cnf < /tmp/r/var/backups/nobackups/mysql/all.sql`
+```bash
+nobackups restore mysql --target /tmp/r --path nobackups-databases
+mysql -u root -p < /tmp/r/nobackups-databases/mysql.sql
+docker exec -i my-mysql sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' < /tmp/r/nobackups-databases/mysql.sql   # container
+```
+
+The dump includes `CREATE DATABASE` statements, so it recreates the databases it contains.

@@ -27,7 +27,7 @@ The simplest consistent option: stop the stack, copy everything, start it again.
 
 ## Live, without downtime
 
-For containers that only hold plain files (uploads, configs, static sites), back up the volumes live. For containers running databases, dump the database out of the container instead (see the [database recipes](/recipes/overview)) and exclude its raw data directory.
+For containers that only hold plain files (uploads, configs, static sites), back up the volumes live. For containers running databases, dump the database from inside its container with [`databases`](/configuration/databases) (`container: my-postgres`) and exclude its volume.
 
 ```yaml
 - name: docker-volumes

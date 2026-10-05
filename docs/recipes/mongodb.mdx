@@ -6,27 +6,29 @@ icon: "leaf"
 
 *No humongous downtime.*
 
+NoBackups runs `mongodump --archive` and stores the archive in the snapshot. The password is passed through a private temporary config file, never on the command line.
+
 ```yaml
 - name: mongodb
-  sources: [/var/backups/nobackups/mongodb]
+  databases:
+    - type: mongodb
+      container: my-mongo          # leave out to use mongodump on the host
+      user: admin
+      password: ${MONGO_PASSWORD}
+      # database: app              # leave out to dump everything
+      # options: ["--oplog"]       # replica sets: point-in-time consistent dump
   destinations: [offsite]
   schedule: "0 */6 * * *"
-  compression: none          # mongodump --gzip already compresses
-  hooks:
-    before:
-      - |
-        set -eu
-        umask 077
-        mkdir -p /var/backups/nobackups/mongodb
-        mongodump --uri="mongodb://backup:${MONGO_BACKUP_PASSWORD}@localhost:27017/?authSource=admin" \
-          --archive=/var/backups/nobackups/mongodb/dump.archive.gz --gzip
-        # on a replica set, add --oplog for a point-in-time consistent dump
-    after:
-      - rm -f /var/backups/nobackups/mongodb/dump.archive.gz
+  retention: { keep_last: 28 }
 ```
 
-`${MONGO_BACKUP_PASSWORD}` is filled in from `nobackups.env` when the config loads. In Docker: `docker exec my-mongo mongodump --archive --gzip -u root -p "$PASS" > /var/backups/nobackups/mongodb/dump.archive.gz`.
+Needs MongoDB Database Tools 100.3 or newer (any `mongo` image from the last few years includes them).
 
 ## Restore
 
-`mongorestore --archive=dump.archive.gz --gzip --drop`
+```bash
+nobackups restore mongodb --target /tmp/r --path nobackups-databases
+mongorestore -u admin -p --archive=/tmp/r/nobackups-databases/mongodb.archive --drop
+docker exec -i my-mongo mongorestore -u admin -p "$MONGO_PASSWORD" --archive --drop \
+  < /tmp/r/nobackups-databases/mongodb.archive                                       # container
+```

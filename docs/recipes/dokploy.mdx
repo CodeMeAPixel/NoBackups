@@ -10,31 +10,24 @@ On a Dokploy server nearly everything that matters lives in Docker: your apps, t
 
 ## The panel: config and database
 
-Dokploy keeps its configuration under `/etc/dokploy` (applications, compose files, Traefik config and certificates, SSH keys) and its state in a Postgres service called `dokploy-postgres`. This job dumps the database the same way Dokploy's own web-server backup does, then archives both.
+Dokploy keeps its configuration under `/etc/dokploy` (applications, compose files, Traefik config and certificates, SSH keys) and its state in a Postgres service called `dokploy-postgres`. This job dumps that database from inside its container, the same way Dokploy's own web-server backup does, and archives both. No password is needed: the dump connects through the container's local socket.
 
 ```yaml
 - name: dokploy
-  sources:
-    - /etc/dokploy
-    - /var/backups/nobackups/dokploy
+  sources: [/etc/dokploy]
   exclude:
     - /etc/dokploy/volume-backups
     - /etc/dokploy/logs
+  databases:
+    - name: dokploy
+      type: postgres
+      container: dokploy-postgres
+      user: dokploy
+      database: dokploy
   destinations: [offsite]
   schedule: "0 3 * * *"
   encryption:
     passphrase: ${BACKUP_PASSPHRASE}
-  hooks:
-    before:
-      - |
-        set -eu
-        umask 077
-        mkdir -p /var/backups/nobackups/dokploy
-        c=$(docker ps --filter name=dokploy-postgres --filter status=running -q | head -n 1)
-        [ -n "$c" ] || { echo "dokploy-postgres is not running"; exit 1; }
-        docker exec "$c" pg_dump -Fc -U dokploy -d dokploy > /var/backups/nobackups/dokploy/dokploy.dump
-    after:
-      - rm -f /var/backups/nobackups/dokploy/dokploy.dump
   retention: { keep_last: 14 }
 ```
 
@@ -66,12 +59,28 @@ docker volume ls
 du -sh /var/lib/docker/volumes/* | sort -h
 ```
 
-<Note>
-  Volumes are copied while the containers run. That's fine for files, but a database's raw data directory can be caught mid-write. For each database you created **in Dokploy**, either:
+## Databases you created in Dokploy
 
-  - turn on Dokploy's built-in scheduled backups for it (**Database → Backups**). It can upload straight to the same S3 bucket, Alarik included. Or
-  - dump it with a hook as in the [PostgreSQL](/recipes/postgresql) and [MySQL](/recipes/mysql) recipes (`docker exec <container> pg_dumpall ...`), and add its volume to `exclude`.
-</Note>
+Volumes are copied while the containers run. That's fine for files, but a database's raw data directory can be caught mid-write. Dump each database you created in Dokploy instead, using the **App Name** from its Dokploy page as the container. Dokploy runs it as a Swarm service, and NoBackups matches the `<app-name>.1.xyz` container automatically.
+
+```yaml
+- name: dokploy-databases
+  databases:
+    - type: postgres
+      container: myapp-postgres-k1x2y3      # the database's App Name in Dokploy
+      user: myapp                           # its Database User in Dokploy
+      password: ${MYAPP_DB_PASSWORD}
+    - type: mariadb
+      container: blog-mariadb-a9b8c7
+      password: ${BLOG_DB_ROOT_PASSWORD}
+  destinations: [offsite]
+  schedule: "0 */6 * * *"
+  encryption:
+    passphrase: ${BACKUP_PASSPHRASE}
+  retention: { keep_last: 28 }
+```
+
+Then add those databases' volumes to the `dokploy-volumes` job's `exclude`. The credentials are on each database's page in Dokploy.
 
 ## Restoring
 
@@ -84,8 +93,9 @@ du -sh /var/lib/docker/volumes/* | sort -h
     nobackups restore dokploy --target /
     c=$(docker ps --filter name=dokploy-postgres -q | head -n 1)
     docker exec -i "$c" pg_restore -U dokploy -d dokploy --clean --if-exists \
-      < /var/backups/nobackups/dokploy/dokploy.dump
+      < /nobackups-databases/dokploy.dump
     docker service update --force dokploy
+    rm -rf /nobackups-databases
     ```
   </Step>
   <Step title="Restore app volumes">

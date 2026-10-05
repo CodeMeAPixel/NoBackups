@@ -130,17 +130,26 @@ jobs:
     #       on: [failure, warning]      # default
     #       mention: "<@&123456789>"    # optional role/user ping on failure/warning
 
-  # Example: dump a database first, back up the dump, then remove it.
-  # - name: postgres
-  #   sources: [/var/backups/postgres]
-  #   destinations: [hetzner, local]
-  #   schedule: "@every 6h"
-  #   hooks:
-  #     before:
-  #       - mkdir -p /var/backups/postgres
-  #       - sudo -u postgres pg_dumpall > /var/backups/postgres/all.sql
-  #     after:   # always runs; $NOBACKUPS_STATUS is success or failure
-  #       - rm -f /var/backups/postgres/all.sql
+  # Databases are dumped with their own tools (pg_dump, mysqldump, mongodump,
+  # redis-cli, sqlite3) and stored in the snapshot under nobackups-databases/.
+  # Set container to dump from inside a running Docker container (a unique
+  # name prefix is enough, e.g. Swarm's "name.1.abc"); leave it out to use
+  # the tools installed on this server.
+  # - name: databases
+  #   databases:
+  #     - type: postgres            # postgres | mysql | mariadb | mongodb | redis | sqlite
+  #       container: my-postgres
+  #       user: postgres
+  #       password: ${PG_PASSWORD}
+  #       database: app             # leave out to dump all databases
+  #     - type: mariadb
+  #       host: 127.0.0.1
+  #       user: backup
+  #       password: ${MYSQL_PASSWORD}
+  #     - type: sqlite
+  #       path: /opt/vaultwarden/data/db.sqlite3
+  #   destinations: [hetzner]
+  #   schedule: "0 */6 * * *"
   #   encryption:
   #     recipients:
   #       - age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs3290gq
@@ -148,6 +157,16 @@ jobs:
   #     # identity_file: /root/backup-key.txt
   #   retention:
   #     keep_last: 28
+  #
+  # Hooks run shell commands before and after a job, e.g. to stop a service
+  # while its files are copied. after hooks always run and get
+  # $NOBACKUPS_STATUS (success or failure).
+  # - name: app-files
+  #   sources: [/srv/app/uploads]
+  #   destinations: [hetzner]
+  #   hooks:
+  #     before: [systemctl stop app-worker]
+  #     after: [systemctl start app-worker]
 
 # ---------------------------------------------------------------------------
 # Notifications for every job. Jobs can add their own under `notify:` too.

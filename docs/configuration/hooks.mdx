@@ -56,4 +56,4 @@ before:
   `${VAR}` inside a hook is expanded by NoBackups when the config loads, which is handy for secrets from `nobackups.env`. Plain `$VAR` is left for the shell at run time.
 </Note>
 
-See the [recipes](/recipes/overview) for ready-made hooks for common databases and Docker.
+For databases, you usually don't need hooks at all: list them under [`databases`](/configuration/databases) and NoBackups runs the dump for you. Hooks are for everything else, like stopping a service or exporting app data.

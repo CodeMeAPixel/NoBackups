@@ -33,6 +33,7 @@
               "configuration/overview",
               "configuration/destinations",
               "configuration/jobs",
+              "configuration/databases",
               "configuration/encryption",
               "configuration/retention",
               "configuration/hooks",

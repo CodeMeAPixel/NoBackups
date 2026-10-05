@@ -41,7 +41,7 @@ Targets can be set **globally** (top-level `notify:`, applies to every job) and 
   </Step>
 </Steps>
 
-Messages are colour-coded embeds (green ✅, yellow ⚠️, red ❌). Each one shows the host, duration, file count, original → stored size, and every destination's result, including how many old snapshots were pruned. Failures include the error message.
+Messages are colour-coded embeds (green ✅, yellow ⚠️, red ❌). Each one shows the host, duration, file count, original → stored size, every destination's result, including how many old snapshots were pruned, and each [database dump](/configuration/databases)'s result. Failures include the error message.
 
 <ParamField path="url" type="string" required>
   The Discord webhook URL. Must be `https://`.
@@ -116,6 +116,9 @@ The payload contains the event, a human-readable `text` (shown as-is by Slack an
   "destinations": [
     { "destination": "hetzner", "error": "connection reset by peer" },
     { "destination": "nas", "key": "postgres/postgres-20261004T031500Z.tar.zst", "pruned": ["postgres/postgres-20260927T031500Z.tar.zst"] }
+  ],
+  "databases": [
+    { "name": "postgres-app", "type": "postgres", "size": 201326592 }
   ]
 }
 ```

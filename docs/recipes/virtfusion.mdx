@@ -16,25 +16,18 @@ This is the panel itself: its database plus the application directory with its c
 
 ```yaml
 - name: virtfusion-control
-  sources:
-    - /opt/virtfusion                       # app, config, .env
-    - /var/backups/nobackups/virtfusion
+  sources: [/opt/virtfusion]                # app, config, .env
   exclude: ["*.log"]
+  databases:
+    - name: virtfusion
+      type: mysql
+      user: ${VIRTFUSION_DB_USER}           # DB_USERNAME in the app's .env
+      password: ${VIRTFUSION_DB_PASSWORD}   # DB_PASSWORD in the app's .env
+      database: virtfusion                  # DB_DATABASE in the app's .env
   destinations: [offsite]
   schedule: "0 */6 * * *"
   encryption:
     passphrase: ${BACKUP_PASSPHRASE}        # the .env holds secrets: always encrypt
-  hooks:
-    before:
-      - |
-        set -eu
-        umask 077
-        mkdir -p /var/backups/nobackups/virtfusion
-        # DB name/credentials are in the app's .env (look for DB_DATABASE / DB_USERNAME)
-        mysqldump --defaults-extra-file=/root/.my.cnf --single-transaction --routines --triggers \
-          virtfusion > /var/backups/nobackups/virtfusion/virtfusion.sql
-    after:
-      - rm -f /var/backups/nobackups/virtfusion/virtfusion.sql
   retention: { keep_last: 28, keep_days: 30 }
 ```
 

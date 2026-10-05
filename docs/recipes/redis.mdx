@@ -6,27 +6,31 @@ icon: "bolt"
 
 *In-memory, not out of mind.*
 
-`redis-cli --rdb` asks the server for a fresh snapshot and writes it locally:
+NoBackups asks Redis for a fresh snapshot (`redis-cli --rdb`) and stores the RDB file. This works for Valkey too, as long as the image or host provides `redis-cli`.
 
 ```yaml
 - name: redis
-  sources: [/var/backups/nobackups/redis]
+  databases:
+    - type: redis
+      container: my-redis          # leave out to use redis-cli on the host
+      password: ${REDIS_PASSWORD}  # if requirepass / ACLs are set
+      # user: backup               # ACL user
   destinations: [offsite]
   schedule: "0 * * * *"
-  hooks:
-    before:
-      - |
-        set -eu
-        umask 077
-        mkdir -p /var/backups/nobackups/redis
-        redis-cli --rdb /var/backups/nobackups/redis/dump.rdb
-        # with a password: REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --rdb ...
-        # docker (Redis 7+): docker exec my-redis redis-cli --rdb - > /var/backups/nobackups/redis/dump.rdb
-    after:
-      - rm -f /var/backups/nobackups/redis/dump.rdb
   retention: { keep_last: 48 }
 ```
 
 ## Restore
 
-stop Redis, copy `dump.rdb` into its data directory (`/var/lib/redis`), start Redis.
+Stop Redis, replace `dump.rdb` in its data directory (usually `/var/lib/redis` or `/data` in containers) with the restored file, then start Redis:
+
+```bash
+nobackups restore redis --target /tmp/r --path nobackups-databases
+systemctl stop redis-server
+cp /tmp/r/nobackups-databases/redis.rdb /var/lib/redis/dump.rdb && chown redis:redis /var/lib/redis/dump.rdb
+systemctl start redis-server
+```
+
+<Note>
+  If append-only mode (`appendonly yes`) is on, Redis loads the AOF instead of the RDB on start. Turn it off for the first start after a restore, then turn it back on.
+</Note>
