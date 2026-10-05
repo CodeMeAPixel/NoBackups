@@ -29,7 +29,13 @@ type Options struct {
 	Sources       []string
 	Exclude       []string
 	OneFileSystem bool
+	Extra         []Extra
 	Log           *slog.Logger
+}
+
+type Extra struct {
+	Path string
+	Name string
 }
 
 func Create(w io.Writer, opts Options) (Stats, error) {
@@ -43,6 +49,9 @@ func Create(w io.Writer, opts Options) (Stats, error) {
 		if err := a.addSource(filepath.Clean(src)); err != nil {
 			return a.stats, err
 		}
+	}
+	if err := a.addExtras(opts.Extra); err != nil {
+		return a.stats, err
 	}
 	return a.stats, tw.Close()
 }
@@ -126,8 +135,33 @@ func (a *archiver) addParents(p string) error {
 	return nil
 }
 
+func (a *archiver) addExtras(extras []Extra) error {
+	dirs := map[string]bool{}
+	for _, e := range extras {
+		if d := path.Dir(e.Name); d != "." && !dirs[d] {
+			dirs[d] = true
+			hdr := &tar.Header{Name: d + "/", Typeflag: tar.TypeDir, Mode: 0o700, ModTime: time.Now().Truncate(time.Second), Format: tar.FormatPAX}
+			if err := a.tw.WriteHeader(hdr); err != nil {
+				return err
+			}
+			a.stats.Dirs++
+		}
+		info, err := os.Lstat(e.Path)
+		if err != nil {
+			return err
+		}
+		if err := a.addNamed(e.Path, e.Name, info); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (a *archiver) addEntry(p string, info fs.FileInfo) error {
-	name := strings.TrimPrefix(filepath.ToSlash(p), "/")
+	return a.addNamed(p, strings.TrimPrefix(filepath.ToSlash(p), "/"), info)
+}
+
+func (a *archiver) addNamed(p, name string, info fs.FileInfo) error {
 	if name == "" || a.seen[name] {
 		return nil
 	}

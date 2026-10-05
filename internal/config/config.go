@@ -34,8 +34,9 @@ type Config struct {
 }
 
 type Destination struct {
-	Name string `yaml:"-"`
-	Type string `yaml:"type"`
+	Name     string `yaml:"-"`
+	Type     string `yaml:"type"`
+	Provider string `yaml:"-"`
 
 	// s3
 	Endpoint           string `yaml:"endpoint"`
@@ -45,7 +46,7 @@ type Destination struct {
 	SecretAccessKey    string `yaml:"secret_access_key"`
 	SessionToken       string `yaml:"session_token"`
 	UseSSL             *bool  `yaml:"use_ssl"`
-	PathStyle          bool   `yaml:"path_style"`
+	PathStyle          *bool  `yaml:"path_style"`
 	StorageClass       string `yaml:"storage_class"`
 	PartSizeMB         int    `yaml:"part_size_mb"`
 	CAFile             string `yaml:"ca_file"`
@@ -70,7 +71,24 @@ type Job struct {
 	Timeout          Duration    `yaml:"timeout"`
 	Notify           Notify      `yaml:"notify"`
 	OneFileSystem    bool        `yaml:"one_file_system"`
+	Databases        []*Database `yaml:"databases"`
 }
+
+type Database struct {
+	Name      string   `yaml:"name"`
+	Type      string   `yaml:"type"`
+	Container string   `yaml:"container"`
+	Host      string   `yaml:"host"`
+	Port      int      `yaml:"port"`
+	User      string   `yaml:"user"`
+	Password  string   `yaml:"password"`
+	Database  string   `yaml:"database"`
+	AuthDB    string   `yaml:"auth_database"`
+	Path      string   `yaml:"path"`
+	Options   []string `yaml:"options"`
+}
+
+var DatabaseTypes = []string{"postgres", "mysql", "mariadb", "mongodb", "redis", "sqlite"}
 
 type Encryption struct {
 	Passphrase     string   `yaml:"passphrase"`
@@ -206,6 +224,54 @@ func expandNode(n *yaml.Node, missing *[]string) {
 	}
 }
 
+type provider struct {
+	endpoint   string
+	region     string
+	pathStyle  bool
+	needRegion bool
+	example    string
+}
+
+var providers = map[string]provider{
+	"aws":          {endpoint: "s3.%s.amazonaws.com", region: "us-east-1"},
+	"hetzner":      {endpoint: "%s.your-objectstorage.com", needRegion: true, example: "fsn1"},
+	"b2":           {endpoint: "s3.%s.backblazeb2.com", needRegion: true, example: "eu-central-003"},
+	"digitalocean": {endpoint: "%s.digitaloceanspaces.com", needRegion: true, example: "ams3"},
+	"wasabi":       {endpoint: "s3.%s.wasabisys.com", needRegion: true, example: "eu-central-1"},
+	"r2":           {region: "auto"},
+	"alarik":       {pathStyle: true},
+	"rustfs":       {pathStyle: true},
+	"minio":        {pathStyle: true},
+	"garage":       {pathStyle: true, region: "garage"},
+}
+
+func ProviderNames() []string {
+	names := make([]string, 0, len(providers))
+	for n := range providers {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func (d *Destination) applyProvider() {
+	p, ok := providers[d.Type]
+	if !ok {
+		return
+	}
+	d.Provider, d.Type = d.Type, "s3"
+	if d.Region == "" {
+		d.Region = p.region
+	}
+	if d.Endpoint == "" && p.endpoint != "" && d.Region != "" {
+		d.Endpoint = fmt.Sprintf(p.endpoint, d.Region)
+	}
+	if d.PathStyle == nil {
+		ps := p.pathStyle
+		d.PathStyle = &ps
+	}
+}
+
 func (c *Config) applyDefaults() {
 	if c.StateDir == "" {
 		c.StateDir = DefaultStateDir
@@ -222,6 +288,7 @@ func (c *Config) applyDefaults() {
 		}
 		d.Name = name
 		d.Prefix = strings.Trim(strings.ReplaceAll(d.Prefix, "{hostname}", c.Hostname), "/")
+		d.applyProvider()
 		if d.Type == "s3" {
 			if strings.HasPrefix(d.Endpoint, "http://") {
 				d.Endpoint = strings.TrimPrefix(d.Endpoint, "http://")
@@ -270,7 +337,9 @@ func (c *Config) Validate() error {
 		}
 		switch d.Type {
 		case "s3":
-			if d.Endpoint == "" {
+			if p := providers[d.Provider]; d.Endpoint == "" && p.needRegion {
+				add("destination %q: region is required for %s (e.g. %s), or set endpoint", name, d.Provider, p.example)
+			} else if d.Endpoint == "" {
 				add("destination %q: endpoint is required", name)
 			}
 			if d.Bucket == "" {
@@ -289,9 +358,9 @@ func (c *Config) Validate() error {
 				add("destination %q: path must be absolute", name)
 			}
 		case "":
-			add("destination %q: type is required (s3 or local)", name)
+			add("destination %q: type is required (s3, local, or a provider: %s)", name, strings.Join(ProviderNames(), ", "))
 		default:
-			add("destination %q: unknown type %q (expected s3 or local)", name, d.Type)
+			add("destination %q: unknown type %q (expected s3, local, or a provider: %s)", name, d.Type, strings.Join(ProviderNames(), ", "))
 		}
 	}
 
@@ -317,8 +386,51 @@ func (c *Config) Validate() error {
 			add("job %q: duplicate job name", j.Name)
 		}
 		seen[j.Name] = true
-		if len(j.Sources) == 0 {
-			add("job %s: at least one source is required", id)
+		if len(j.Sources) == 0 && len(j.Databases) == 0 {
+			add("job %s: at least one source or database is required", id)
+		}
+		dbNames := map[string]bool{}
+		for i, db := range j.Databases {
+			if db == nil {
+				add("job %s: database #%d is empty", id, i+1)
+				continue
+			}
+			where := fmt.Sprintf("job %s: database #%d", id, i+1)
+			if !slices.Contains(DatabaseTypes, db.Type) {
+				add("%s: type must be one of %s", where, strings.Join(DatabaseTypes, ", "))
+				continue
+			}
+			if db.Name == "" {
+				db.Name = db.Type
+				if db.Database != "" {
+					db.Name += "-" + db.Database
+				} else if db.Path != "" {
+					db.Name += "-" + strings.TrimSuffix(filepath.Base(db.Path), filepath.Ext(db.Path))
+				}
+			}
+			if !nameRe.MatchString(db.Name) {
+				add("%s: name %q may only contain letters, digits, '.', '_' and '-'", where, db.Name)
+			}
+			if dbNames[db.Name] {
+				add("%s: duplicate name %q; set name: to tell them apart", where, db.Name)
+			}
+			dbNames[db.Name] = true
+			if db.Port < 0 || db.Port > 65535 {
+				add("%s: invalid port %d", where, db.Port)
+			}
+			switch db.Type {
+			case "sqlite":
+				if db.Path == "" || !filepath.IsAbs(db.Path) {
+					add("%s: sqlite needs an absolute path to the database file", where)
+				}
+				if db.Container != "" {
+					add("%s: sqlite is dumped from the host; set path to the file instead of container", where)
+				}
+			case "redis":
+				if db.Database != "" {
+					add("%s: redis dumps the whole server; remove database", where)
+				}
+			}
 		}
 		for _, s := range j.Sources {
 			if !filepath.IsAbs(s) {

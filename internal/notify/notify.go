@@ -148,6 +148,17 @@ func discordPayload(d config.Discord, res *backup.Result) discordMessage {
 		}
 		e.Fields = append(e.Fields, discordField{Name: "Destinations", Value: truncate(strings.Join(lines, "\n"), 1024)})
 	}
+	if len(res.Databases) > 0 {
+		var lines []string
+		for _, db := range res.Databases {
+			if db.Error != "" {
+				lines = append(lines, fmt.Sprintf("❌ **%s**: %s", db.Name, truncate(db.Error, 200)))
+			} else {
+				lines = append(lines, fmt.Sprintf("✅ **%s** (%s, %s)", db.Name, db.Type, HumanBytes(db.Size)))
+			}
+		}
+		e.Fields = append(e.Fields, discordField{Name: "Databases", Value: truncate(strings.Join(lines, "\n"), 1024)})
+	}
 	e.Footer = &struct {
 		Text string `json:"text"`
 	}{"NoBackups"}

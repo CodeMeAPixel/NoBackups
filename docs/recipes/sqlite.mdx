@@ -6,23 +6,32 @@ icon: "feather"
 
 *Small database, big regrets if you lose it.*
 
-This also covers apps built on it: Vaultwarden, Gitea, Uptime Kuma, Home Assistant…
-
-Copying a live SQLite file can catch it mid-write. `sqlite3 .backup` makes a safe copy without stopping the app:
+This covers Vaultwarden, Gitea, Uptime Kuma, Home Assistant and many more. Copying a live SQLite file can catch it mid-write. NoBackups uses `sqlite3 .backup` instead, which makes a consistent copy while the app keeps running. `sqlite3` must be installed on the host (`apt install sqlite3`).
 
 ```yaml
 - name: vaultwarden
-  sources:
-    - /opt/vaultwarden/data
-    - /var/backups/nobackups/vaultwarden   # the safe copy made by the hook
-  exclude: ["db.sqlite3*"]                 # live DB + WAL files from the data dir
+  sources: [/opt/vaultwarden/data]
+  exclude: ["db.sqlite3*"]                 # the live database + WAL files
+  databases:
+    - type: sqlite
+      name: vaultwarden
+      path: /opt/vaultwarden/data/db.sqlite3
   destinations: [offsite]
   schedule: "0 */4 * * *"
-  hooks:
-    before:
-      - |
-        set -eu
-        umask 077
-        mkdir -p /var/backups/nobackups/vaultwarden
-        sqlite3 /opt/vaultwarden/data/db.sqlite3 ".backup '/var/backups/nobackups/vaultwarden/vaultwarden.sqlite3'"
+```
+
+The data directory (attachments, keys) comes from `sources`, and the database from the safe copy at `nobackups-databases/vaultwarden.sqlite`.
+
+<Tip>
+  The database lives inside a Docker volume? Point `path` at the file under `/var/lib/docker/volumes/<volume>/_data/`. `sqlite3` runs on the host, so the container doesn't need it.
+</Tip>
+
+## Restore
+
+Stop the app, put the copy back under the original name, and start it again:
+
+```bash
+nobackups restore vaultwarden --target /tmp/r
+cp /tmp/r/nobackups-databases/vaultwarden.sqlite /opt/vaultwarden/data/db.sqlite3
+rm -f /opt/vaultwarden/data/db.sqlite3-wal /opt/vaultwarden/data/db.sqlite3-shm
 ```

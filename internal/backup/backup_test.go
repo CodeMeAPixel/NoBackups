@@ -223,3 +223,74 @@ func TestLockPreventsConcurrentRuns(t *testing.T) {
 		u()
 	}
 }
+
+func TestDatabaseDumpsAndFailedDumpSkipsRetention(t *testing.T) {
+	bin := t.TempDir()
+	os.WriteFile(filepath.Join(bin, "pg_dump"), []byte(`#!/bin/sh
+for a in "$@"; do db=$a; done
+[ "$db" = broken ] && { echo "pg_dump: error: database \"broken\" does not exist" >&2; exit 1; }
+printf 'dump of %s as %s\n' "$db" "$PGPASSWORD"
+`), 0o755)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	src := t.TempDir()
+	os.WriteFile(filepath.Join(src, "f"), []byte("file"), 0o644)
+	store := t.TempDir()
+	yaml := `
+state_dir: ` + t.TempDir() + `
+destinations:
+  disk: {type: local, path: ` + store + `}
+jobs:
+  - name: j
+    sources: [` + src + `]
+    databases:
+      - {type: postgres, database: app, password: pw}
+      - {type: postgres, database: broken}
+    destinations: [disk]
+    retention: {keep_last: 1}
+`
+	cfg, err := config.Parse([]byte(yaml), "test.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := cfg.Jobs[0]
+	r := NewRunner(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ctx := context.Background()
+
+	job.Databases = job.Databases[:1]
+	if _, err := r.Run(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+
+	cfg2, _ := config.Parse([]byte(yaml), "test.yaml")
+	job2 := cfg2.Jobs[0]
+	res, err := r.Run(ctx, job2)
+	if err == nil || !strings.Contains(err.Error(), `database "broken" does not exist`) {
+		t.Fatalf("expected the failed dump to fail the job, got %v", err)
+	}
+	if len(res.Databases) != 2 || res.Databases[0].Error != "" || res.Databases[1].Error == "" {
+		t.Fatalf("database results: %+v", res.Databases)
+	}
+
+	b, _ := r.Backend("disk")
+	snaps, _ := ListSnapshots(ctx, b, "j")
+	if len(snaps) != 2 {
+		t.Fatalf("retention must be skipped after a failed dump; have %d snapshots", len(snaps))
+	}
+
+	target := t.TempDir()
+	if _, _, err := r.Restore(ctx, job2, RestoreOptions{Target: target}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(target, "nobackups-databases", "postgres-app.dump"))
+	if err != nil || string(got) != "dump of app as pw\n" {
+		t.Fatalf("restored dump %q, %v", got, err)
+	}
+	if _, err := os.ReadFile(filepath.Join(target, src, "f")); err != nil {
+		t.Fatal("files should be backed up alongside the dumps")
+	}
+	if entries, _ := os.ReadDir(filepath.Join(cfg.StateDir, "dumps")); len(entries) != 0 {
+		t.Fatalf("dump files left behind: %v", entries)
+	}
+}

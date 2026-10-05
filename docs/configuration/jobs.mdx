@@ -29,8 +29,12 @@ jobs:
   Unique. Letters, digits, `.`, `_` and `-`. Used in snapshot names, so changing it starts a new snapshot series.
 </ParamField>
 
-<ParamField path="sources" type="string[]" required>
-  Absolute paths to files or directories.
+<ParamField path="sources" type="string[]">
+  Absolute paths to files or directories. A job needs `sources`, `databases`, or both.
+</ParamField>
+
+<ParamField path="databases" type="object[]">
+  Databases to dump into the snapshot (PostgreSQL, MySQL, MariaDB, MongoDB, Redis, SQLite), on the host or inside Docker containers. See [Databases](/configuration/databases).
 </ParamField>
 
 <ParamField path="destinations" type="string[]" required>

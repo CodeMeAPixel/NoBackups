@@ -1,74 +1,64 @@
 ---
 title: "PostgreSQL"
-description: "Consistent dumps with pg_dumpall or pg_dump, on the host or in Docker."
+description: "Consistent dumps with pg_dump or pg_dumpall, on the host or in Docker."
 icon: "database"
 ---
 
 *Dump it like it's hot.*
 
-## Installed on the host
+NoBackups runs `pg_dump` / `pg_dumpall` for you. Both take a consistent snapshot without locking writers. See [Databases](/configuration/databases) for every option.
 
-`pg_dumpall` takes a consistent snapshot of every database, plus roles and permissions, without locking writers.
+<Tabs>
+  <Tab title="In Docker">
+    Uses the tools inside the container, so nothing needs installing on the host:
+
+    ```yaml
+    - name: postgres
+      databases:
+        - type: postgres
+          container: my-postgres
+          user: postgres
+          password: ${PG_PASSWORD}
+      destinations: [offsite]
+      schedule: "0 */6 * * *"
+      retention: { keep_last: 28 }
+    ```
+  </Tab>
+  <Tab title="On the host">
+    Needs `postgresql-client`, ideally the same major version as the server:
+
+    ```yaml
+    - name: postgres
+      databases:
+        - type: postgres
+          password: ${PG_PASSWORD}
+      destinations: [offsite]
+      schedule: "0 */6 * * *"
+      retention: { keep_last: 28 }
+    ```
+  </Tab>
+</Tabs>
+
+Without `database`, every database plus roles and permissions is dumped with `pg_dumpall` (`postgres.sql`). To dump specific databases in the faster custom format, which can restore single tables, list them separately:
 
 ```yaml
-- name: postgres
-  sources: [/var/backups/nobackups/postgres]
+- name: postgres-apps
+  databases:
+    - { type: postgres, container: my-postgres, password: "${PG_PASSWORD}", database: app }
+    - { type: postgres, container: my-postgres, password: "${PG_PASSWORD}", database: analytics, options: ["--exclude-table-data=events_raw"] }
   destinations: [offsite]
   schedule: "0 */6 * * *"
-  compression: zstd
-  hooks:
-    before:
-      - |
-        set -eu
-        umask 077
-        mkdir -p /var/backups/nobackups/postgres
-        cd /tmp && sudo -u postgres pg_dumpall --clean --if-exists > /var/backups/nobackups/postgres/all.sql
-    after:
-      - rm -f /var/backups/nobackups/postgres/all.sql
-  retention: { keep_last: 28 }
-```
-
-### Large databases
-
-For big databases, use one custom-format dump per database instead. These dump in parallel, and `pg_restore` can restore a single table:
-
-```yaml
-    before:
-      - |
-        set -eu
-        umask 077
-        D=/var/backups/nobackups/postgres
-        install -d -m 700 -o postgres "$D"   # pg_dump -Fd writes as the postgres user
-        cd /tmp
-        sudo -u postgres pg_dumpall --globals-only > "$D/globals.sql"
-        for db in $(sudo -u postgres psql -Atc "SELECT datname FROM pg_database WHERE NOT datistemplate"); do
-          sudo -u postgres pg_dump -Fd -j 4 -Z 0 -f "$D/$db.dir" "$db"
-        done
-    after:
-      - rm -rf /var/backups/nobackups/postgres/*
-```
-
-(`-Z 0` turns off pg_dump's own compression, because NoBackups compresses with zstd anyway.)
-
-## In Docker
-
-The same idea, with the dump coming out of the container:
-
-```yaml
-    before:
-      - |
-        set -eu
-        umask 077
-        mkdir -p /var/backups/nobackups/postgres
-        docker exec my-postgres pg_dumpall -U postgres --clean --if-exists > /var/backups/nobackups/postgres/all.sql
 ```
 
 ## Restore
 
+```bash
+nobackups restore postgres --target /tmp/r --path nobackups-databases
+```
 
-
-```sh
-nobackups restore postgres --target /tmp/r
-psql -U postgres -f /tmp/r/var/backups/nobackups/postgres/all.sql
-# docker: docker exec -i my-postgres psql -U postgres < /tmp/r/var/backups/nobackups/postgres/all.sql
+```bash
+pg_restore -U postgres -d app --clean --if-exists /tmp/r/nobackups-databases/postgres-app.dump   # one database
+psql -U postgres -f /tmp/r/nobackups-databases/postgres.sql postgres                            # pg_dumpall
+docker exec -i my-postgres pg_restore -U postgres -d app --clean --if-exists \
+  < /tmp/r/nobackups-databases/postgres-app.dump                                                # into a container
 ```

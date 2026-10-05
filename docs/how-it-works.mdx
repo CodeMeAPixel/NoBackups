@@ -15,6 +15,9 @@ Every run of a job goes through the same steps:
   <Step title="Before hooks">
     Your `hooks.before` commands run, e.g. a database dump. If one fails, the run is aborted.
   </Step>
+  <Step title="Database dumps">
+    Each entry in `databases` is dumped with its own tool (`pg_dump`, `mysqldump`, …) to a private temporary file, which goes into the snapshot under `nobackups-databases/` and is deleted afterwards. See [Databases](/configuration/databases).
+  </Step>
   <Step title="Archive → compress → encrypt → stream">
     Sources are walked and written as a tar stream, compressed (zstd by default), encrypted with age if configured, and streamed straight to **every destination in parallel**. Nothing is staged on local disk.
   </Step>
@@ -41,7 +44,7 @@ destinations: [hetzner, nas]
 
 ## Memory and disk
 
-- **Disk**: none beyond what your hooks write (e.g. a database dump).
+- **Disk**: none, except temporary database dumps (one per database, deleted after the run) and whatever your hooks write.
 - **Memory**: about `part_size_mb` (default 64 MB) per S3 destination, for the multipart upload buffer.
 - **Speed**: the slowest destination sets the pace for all of them.
 

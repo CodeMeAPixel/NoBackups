@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/codemeapixel/nobackups/internal/archive"
 	"github.com/codemeapixel/nobackups/internal/config"
+	"github.com/codemeapixel/nobackups/internal/dbdump"
 	"github.com/codemeapixel/nobackups/internal/storage"
 )
 
@@ -42,6 +44,14 @@ type Result struct {
 	StoredBytes  int64        `json:"stored_bytes"`
 	Warnings     int64        `json:"warnings"`
 	Destinations []DestResult `json:"destinations"`
+	Databases    []DBResult   `json:"databases,omitempty"`
+}
+
+type DBResult struct {
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Size  int64  `json:"size"`
+	Error string `json:"error,omitempty"`
 }
 
 type Runner struct {
@@ -150,6 +160,12 @@ func (r *Runner) backup(ctx context.Context, log *slog.Logger, job *config.Job, 
 		backends = append(backends, b)
 	}
 
+	extras, cleanup, dumpErr := r.dumpDatabases(ctx, log, job, res)
+	defer cleanup()
+	if dumpErr != nil && len(extras) == 0 && len(job.Sources) == 0 {
+		return dumpErr
+	}
+
 	key := snapshotKey(job.Name, res.Started, job.Compression, recips != nil)
 	uploadCtx, cancelUploads := context.WithCancel(ctx)
 	defer cancelUploads()
@@ -180,7 +196,7 @@ func (r *Runner) backup(ctx context.Context, log *slog.Logger, job *config.Job, 
 
 	fan := newFanout(pipes)
 	counter := &countingWriter{w: fan}
-	stats, archErr := writeArchive(counter, job, recips, log)
+	stats, archErr := writeArchive(counter, job, extras, recips, log)
 	fan.closeAll(archErr)
 	if archErr != nil {
 		cancelUploads()
@@ -209,6 +225,10 @@ func (r *Runner) backup(ctx context.Context, log *slog.Logger, job *config.Job, 
 			continue
 		}
 		log.Info("uploaded", "destination", results[i].Destination, "key", key)
+		if dumpErr != nil {
+			log.Warn("skipping retention because a database dump failed", "destination", results[i].Destination)
+			continue
+		}
 		pruned, err := r.prune(ctx, log, backends[i], job)
 		results[i].Pruned = pruned
 		if err != nil {
@@ -217,12 +237,46 @@ func (r *Runner) backup(ctx context.Context, log *slog.Logger, job *config.Job, 
 	}
 	res.Destinations = results
 	if len(failed) > 0 {
-		return fmt.Errorf("upload failed for: %s", strings.Join(failed, ", "))
+		return errors.Join(dumpErr, fmt.Errorf("upload failed for: %s", strings.Join(failed, ", ")))
 	}
-	return nil
+	return dumpErr
 }
 
-func writeArchive(w io.Writer, job *config.Job, recips []age.Recipient, log *slog.Logger) (archive.Stats, error) {
+func (r *Runner) dumpDatabases(ctx context.Context, log *slog.Logger, job *config.Job, res *Result) ([]archive.Extra, func(), error) {
+	if len(job.Databases) == 0 {
+		return nil, func() {}, nil
+	}
+	dir := filepath.Join(r.Cfg.StateDir, "dumps", job.Name)
+	cleanup := func() {
+		if err := os.RemoveAll(dir); err != nil {
+			log.Warn("cannot remove database dumps", "dir", dir, "err", err)
+		}
+	}
+	cleanup()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, func() {}, fmt.Errorf("create dump directory: %w", err)
+	}
+	var extras []archive.Extra
+	var errs []error
+	for _, db := range job.Databases {
+		start := time.Now()
+		log.Info("dumping database", "database", db.Name, "type", db.Type, "container", db.Container)
+		d, err := dbdump.Dump(ctx, db, dir)
+		dr := DBResult{Name: db.Name, Type: db.Type, Size: d.Size}
+		if err != nil {
+			dr.Error = err.Error()
+			errs = append(errs, fmt.Errorf("database %s: %w", db.Name, err))
+			log.Error("database dump failed", "database", db.Name, "err", err)
+		} else {
+			extras = append(extras, archive.Extra{Path: d.File, Name: d.ArchiveName})
+			log.Info("database dumped", "database", db.Name, "bytes", d.Size, "duration", time.Since(start).Round(time.Millisecond))
+		}
+		res.Databases = append(res.Databases, dr)
+	}
+	return extras, cleanup, errors.Join(errs...)
+}
+
+func writeArchive(w io.Writer, job *config.Job, extras []archive.Extra, recips []age.Recipient, log *slog.Logger) (archive.Stats, error) {
 	var out io.WriteCloser = nopWriteCloser{w}
 	if recips != nil {
 		enc, err := age.Encrypt(w, recips...)
@@ -239,6 +293,7 @@ func writeArchive(w io.Writer, job *config.Job, recips []age.Recipient, log *slo
 		Sources:       job.Sources,
 		Exclude:       job.Exclude,
 		OneFileSystem: job.OneFileSystem,
+		Extra:         extras,
 		Log:           log,
 	})
 	if err != nil {

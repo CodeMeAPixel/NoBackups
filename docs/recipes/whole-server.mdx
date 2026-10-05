@@ -31,4 +31,8 @@ A "disaster recovery" job for a server without special workloads. `one_file_syst
   retention: { keep_last: 4 }
 ```
 
+<Warning>
+  On Docker hosts (Dokploy, Coolify, Portainer…) this job skips **all of your apps' data**, because it excludes `/var/lib/docker`. Pair it with the [Docker](/recipes/docker) or [Dokploy](/recipes/dokploy) recipe.
+</Warning>
+
 If `/home` or `/var` are separate filesystems, list them as extra sources, because `one_file_system` won't cross into them from `/`.

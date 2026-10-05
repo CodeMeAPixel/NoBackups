@@ -7,7 +7,7 @@ NoBackups is named after the situation it gets you out of. It's one small static
 
 **What's in the box**
 
-- **Any S3-compatible storage**: Hetzner Object Storage, RustFS, MinIO, Garage, Alarik, AWS S3, Backblaze B2, Cloudflare R2, … plus local directories (second disk, NFS). Your data, your bucket list.
+- **Any S3-compatible storage**: Alarik, Hetzner Object Storage, RustFS, MinIO, Garage, AWS S3, Backblaze B2, Cloudflare R2, … plus local directories (second disk, NFS). Your data, your bucket list.
 - **Multiple destinations per job**: the archive is built once and streamed to every destination in parallel. If one destination fails, the others still finish, so 3-2-1 takes one line of config.
 - **Streaming**: nothing is staged on local disk. Memory use is about `part_size_mb` per S3 destination. Light enough for even the most *byte*-sized VPS.
 - **zstd / gzip compression** and **age encryption** (passphrase or public keys). Squeezed, sealed, delivered.
@@ -21,7 +21,7 @@ NoBackups is named after the situation it gets you out of. It's one small static
 
 📚 **Full documentation** lives in [`docs/`](docs/) (a [Mintlify](https://mintlify.com) site: run `make docs` to preview it locally).
 
-Hungry for examples? The [Recipes](#recipes-the-backup-cookbook) cover Docker, PostgreSQL, MySQL/MariaDB, MongoDB, Redis, SQLite, VirtFusion and whole-server setups.
+Hungry for examples? The [Recipes](#recipes-the-backup-cookbook) cover Docker, Dokploy, PostgreSQL, MySQL/MariaDB, MongoDB, Redis, SQLite, VirtFusion and whole-server setups.
 
 ## Install: back it up, then back it in
 
@@ -87,8 +87,7 @@ A minimal config:
 ```yaml
 destinations:
   hetzner:
-    type: s3
-    endpoint: fsn1.your-objectstorage.com
+    type: hetzner
     region: fsn1
     bucket: my-backups
     access_key_id: ${HETZNER_ACCESS_KEY}
@@ -117,12 +116,12 @@ Run `nobackups init -c ./config.yaml` to get the fully commented example, or rea
 
 | Field | Applies to | Notes |
 |---|---|---|
-| `type` | all | `s3` or `local` |
+| `type` | all | `local`, `s3`, or a provider shorthand (`alarik`, `rustfs`, `minio`, `garage`, `hetzner`, `aws`, `r2`, `b2`, `digitalocean`, `wasabi`) that fills in that provider's defaults |
 | `prefix` | all | Key prefix / subdirectory. `{hostname}` is replaced by the server's hostname, so one bucket can serve a whole fleet. |
-| `endpoint` | s3 | Host, optionally with port. Prefix with `http://` for plain HTTP. |
+| `endpoint` | s3 | Host, optionally with port. Prefix with `http://` for plain HTTP. Derived from `region` for `hetzner`, `aws`, `b2`, `digitalocean` and `wasabi`. |
 | `bucket`, `region` | s3 | `region` defaults to `us-east-1`. Most self-hosted stores ignore it. |
 | `access_key_id`, `secret_access_key`, `session_token` | s3 | |
-| `path_style` | s3 | Set to `true` for most self-hosted stores (RustFS, MinIO, Garage) |
+| `path_style` | s3 | Defaults to `true` for `alarik`, `rustfs`, `minio` and `garage`; otherwise picked automatically |
 | `storage_class` | s3 | e.g. `STANDARD_IA` on AWS |
 | `part_size_mb` | s3 | Multipart chunk size, default 64. Max object size is 10,000 × this. |
 | `ca_file` / `insecure_skip_verify` | s3 | For private CAs / self-signed certs |
@@ -131,11 +130,13 @@ Run `nobackups init -c ./config.yaml` to get the fully commented example, or rea
 Provider examples:
 
 ```yaml
-hetzner:   { type: s3, endpoint: nbg1.your-objectstorage.com, region: nbg1, bucket: b, ... }
-rustfs:    { type: s3, endpoint: "http://10.0.0.5:9000", path_style: true, bucket: b, ... }
-aws:       { type: s3, endpoint: s3.eu-central-1.amazonaws.com, region: eu-central-1, bucket: b, ... }
-r2:        { type: s3, endpoint: <account>.r2.cloudflarestorage.com, region: auto, bucket: b, ... }
-b2:        { type: s3, endpoint: s3.eu-central-003.backblazeb2.com, region: eu-central-003, bucket: b, ... }
+alarik:    { type: alarik, endpoint: s3.example.com, bucket: b, ... }
+hetzner:   { type: hetzner, region: nbg1, bucket: b, ... }
+rustfs:    { type: rustfs, endpoint: "http://10.0.0.5:9000", bucket: b, ... }
+aws:       { type: aws, region: eu-central-1, bucket: b, ... }
+r2:        { type: r2, endpoint: <account>.r2.cloudflarestorage.com, bucket: b, ... }
+b2:        { type: b2, region: eu-central-003, bucket: b, ... }
+other:     { type: s3, endpoint: s3.example.net, region: us-east-1, bucket: b, ... }
 ```
 
 ### Jobs: what to save, and when
@@ -143,7 +144,8 @@ b2:        { type: s3, endpoint: s3.eu-central-003.backblazeb2.com, region: eu-c
 | Field | Notes |
 |---|---|
 | `name` | Letters, digits, `.`, `_`, `-` |
-| `sources` | Absolute paths (files or directories) |
+| `sources` | Absolute paths (files or directories). A job needs `sources`, `databases`, or both. |
+| `databases` | Databases to dump into the snapshot; see [Databases](#databases-dump-dont-copy) |
 | `exclude` | Patterns without `/` match a name anywhere (`*.log`, `node_modules`). Patterns with `/` match full paths and everything under them (`/var/lib/docker`, `/home/*/.cache`). |
 | `destinations` | Names from `destinations:` |
 | `schedule` | Cron (`m h dom mon dow`), `@daily`, `@hourly`, `@every 6h`. Leave it out for manual-only jobs. |
@@ -154,6 +156,42 @@ b2:        { type: s3, endpoint: s3.eu-central-003.backblazeb2.com, region: eu-c
 | `timeout` | e.g. `6h` |
 | `one_file_system` | Don't cross into other mounts |
 | `notify` | Per-job `discord` / `webhooks` targets, sent in addition to the global ones (see [Notifications](#notifications-no-news-is-suspicious-news)) |
+
+### Databases: dump, don't copy
+
+List databases on a job and NoBackups dumps each one with its own tool, on the host or inside a Docker container, and puts the dumps in the snapshot under `nobackups-databases/`. No hook scripts needed.
+
+```yaml
+jobs:
+  - name: databases
+    databases:
+      - type: postgres            # postgres | mysql | mariadb | mongodb | redis | sqlite
+        container: my-postgres    # dump inside this container; leave out to use the host's tools
+        user: postgres
+        password: ${PG_PASSWORD}
+        database: app             # leave out to dump all databases
+      - type: mariadb
+        host: 127.0.0.1
+        user: backup
+        password: ${MYSQL_PASSWORD}
+      - type: sqlite
+        path: /opt/vaultwarden/data/db.sqlite3
+    destinations: [offsite]
+    schedule: "0 */6 * * *"
+```
+
+| Type | Tool | Restore with |
+|---|---|---|
+| `postgres` | `pg_dump -Fc` (one database) / `pg_dumpall` (all) | `pg_restore -d app --clean --if-exists x.dump` / `psql -f x.sql` |
+| `mysql`, `mariadb` | `mysqldump --single-transaction` / `mariadb-dump` | `mysql < x.sql` |
+| `mongodb` | `mongodump --archive` | `mongorestore --archive=x.archive --drop` |
+| `redis` | `redis-cli --rdb` | Replace `dump.rdb` while Redis is stopped |
+| `sqlite` | `sqlite3 .backup` (host only) | Copy the file back while the app is stopped |
+
+- **Containers:** `container` matches the exact name or a unique prefix, so Swarm (`dokploy-postgres.1.abc…`) and Compose (`app-db-1`) names just work.
+- **Passwords** never appear on the command line; they're passed through the tool's environment variable (or a private temporary file for MongoDB).
+- **Failures:** if a dump fails, everything else is still backed up, but the run is reported as failed and retention is skipped, so old good dumps aren't deleted.
+- Other options: `name`, `port`, `auth_database` (MongoDB), `options` (extra arguments for the dump tool). See the [databases docs](docs/configuration/databases.mdx).
 
 ### Notifications: no news is suspicious news
 
@@ -237,17 +275,7 @@ Copy-paste job configs for common workloads, prepped and ready to serve. Each go
 
 ### Rule zero: don't copy a moving target
 
-Copying the files of a running database gives you a backup that may not restore. The pattern used throughout these recipes:
-
-1. A `before` hook writes a consistent **dump** (or stops/pauses the service) into a staging directory such as `/var/backups/nobackups/<job>`.
-2. NoBackups archives that directory.
-3. An `after` hook deletes the dump (or restarts the service). `after` hooks **always run**, even if the backup failed, so services never stay stopped.
-
-Some rules for hooks:
-
-- Each list item runs as its own `sh -c` command, and any failure aborts the job. For a multi-line script (`- |`), **start it with `set -eu`**, otherwise only the last line's exit code counts.
-- Dumps are written to local disk first, so the staging directory needs room for one dump. Compression and encryption happen on the way out.
-- Create the staging directory with `umask 077` so dumps (which contain all your data) are readable by root only.
+Copying the files of a running database gives you a backup that may not restore. Use [`databases`](#databases-dump-dont-copy) for databases, and hooks for anything else that needs preparing (an app's export command, stopping a service while its files are copied). For multi-line hook scripts, start with `set -eu`, otherwise only the last line's exit code counts.
 
 ---
 
@@ -270,7 +298,7 @@ Some rules for hooks:
   retention: { keep_last: 14 }
 ```
 
-**No downtime:** for containers that only hold plain files (uploads, configs, static sites), back up the volumes live. For containers running databases, dump the database out of the container instead (see below) and exclude its raw data directory.
+**No downtime:** for containers that only hold plain files (uploads, configs, static sites), back up the volumes live. For containers running databases, dump them from inside their containers with [`databases`](#databases-dump-dont-copy) and exclude their volumes.
 
 ```yaml
 - name: docker-volumes
@@ -310,114 +338,105 @@ docker compose -f /opt/myapp/compose.yaml up -d
 
 ---
 
-### PostgreSQL: dump it like it's hot
+### Dokploy: deploy with confidence, restore with even more
 
-**Installed on the host:** `pg_dumpall` takes a consistent snapshot of every database, plus roles and permissions, without locking writers.
+On a Dokploy server nearly everything lives in Docker, so the whole-server job below (which skips `/var/lib/docker`) backs up **none of your apps** on its own. Add these jobs.
+
+**The panel:** `/etc/dokploy` plus a dump of Dokploy's own Postgres, taken inside its container the same way Dokploy's built-in backup does it (no password needed):
 
 ```yaml
-- name: postgres
-  sources: [/var/backups/nobackups/postgres]
+- name: dokploy
+  sources: [/etc/dokploy]
+  exclude:
+    - /etc/dokploy/volume-backups
+    - /etc/dokploy/logs
+  databases:
+    - name: dokploy
+      type: postgres
+      container: dokploy-postgres
+      user: dokploy
+      database: dokploy
+  destinations: [offsite]
+  schedule: "0 3 * * *"
+  encryption:
+    passphrase: ${BACKUP_PASSPHRASE}
+  retention: { keep_last: 14 }
+```
+
+**Your apps:** named Docker volumes, minus the panel database's raw files:
+
+```yaml
+- name: dokploy-volumes
+  sources: [/var/lib/docker/volumes]
+  exclude:
+    - /var/lib/docker/volumes/dokploy-postgres
+    - /var/lib/docker/volumes/backingFsBlockDev
+  destinations: [offsite]
+  schedule: "30 3 * * *"
+  encryption:
+    passphrase: ${BACKUP_PASSPHRASE}
+  retention: { keep_last: 7, keep_days: 30 }
+```
+
+**Databases you created in Dokploy:** dump them using each database's App Name as the container, then add their volumes to the `exclude` list above:
+
+```yaml
+- name: dokploy-databases
+  databases:
+    - type: postgres
+      container: myapp-postgres-k1x2y3      # the database's App Name in Dokploy
+      user: myapp                           # its Database User in Dokploy
+      password: ${MYAPP_DB_PASSWORD}
+    - type: mariadb
+      container: blog-mariadb-a9b8c7
+      password: ${BLOG_DB_ROOT_PASSWORD}
   destinations: [offsite]
   schedule: "0 */6 * * *"
-  compression: zstd
-  hooks:
-    before:
-      - |
-        set -eu
-        umask 077
-        mkdir -p /var/backups/nobackups/postgres
-        cd /tmp && sudo -u postgres pg_dumpall --clean --if-exists > /var/backups/nobackups/postgres/all.sql
-    after:
-      - rm -f /var/backups/nobackups/postgres/all.sql
+  encryption:
+    passphrase: ${BACKUP_PASSPHRASE}
   retention: { keep_last: 28 }
 ```
 
-For big databases, use one custom-format dump per database instead. These dump in parallel, and `pg_restore` can restore a single table:
+Restore steps are in the [Dokploy docs page](docs/recipes/dokploy.mdx).
+
+---
+
+### PostgreSQL: dump it like it's hot
 
 ```yaml
-    before:
-      - |
-        set -eu
-        umask 077
-        D=/var/backups/nobackups/postgres
-        install -d -m 700 -o postgres "$D"   # pg_dump -Fd writes as the postgres user
-        cd /tmp
-        sudo -u postgres pg_dumpall --globals-only > "$D/globals.sql"
-        for db in $(sudo -u postgres psql -Atc "SELECT datname FROM pg_database WHERE NOT datistemplate"); do
-          sudo -u postgres pg_dump -Fd -j 4 -Z 0 -f "$D/$db.dir" "$db"
-        done
-    after:
-      - rm -rf /var/backups/nobackups/postgres/*
-```
+    - name: postgres
+      databases:
+        - type: postgres
+          container: my-postgres
+          user: postgres
+          password: ${PG_PASSWORD}
+      destinations: [offsite]
+      schedule: "0 */6 * * *"
+      retention: { keep_last: 28 }
+    ```
 
-(`-Z 0` turns off pg_dump's own compression, because NoBackups compresses with zstd anyway.)
+Leave out `container` to use `pg_dump` on the host (install `postgresql-client`). Without `database`, everything (including roles) is dumped with `pg_dumpall`.
 
-**In Docker:**
-
-```yaml
-    before:
-      - |
-        set -eu
-        umask 077
-        mkdir -p /var/backups/nobackups/postgres
-        docker exec my-postgres pg_dumpall -U postgres --clean --if-exists > /var/backups/nobackups/postgres/all.sql
-```
-
-**Restore:**
-
-```sh
-nobackups restore postgres --target /tmp/r
-psql -U postgres -f /tmp/r/var/backups/nobackups/postgres/all.sql
-# docker: docker exec -i my-postgres psql -U postgres < /tmp/r/var/backups/nobackups/postgres/all.sql
-```
+**Restore:** `pg_restore -U postgres -d app --clean --if-exists postgres-app.dump`, or `psql -f postgres.sql postgres` for a `pg_dumpall` file.
 
 ---
 
 ### MySQL / MariaDB: single transaction, zero drama
 
-`--single-transaction` gives a consistent dump of InnoDB tables without locking. Keep credentials in `/root/.my.cnf` (`chmod 600`), not on the command line:
-
-```ini
-# /root/.my.cnf
-[client]
-user=backup
-password=secret
-```
-
 ```yaml
-- name: mysql
-  sources: [/var/backups/nobackups/mysql]
-  destinations: [offsite]
-  schedule: "0 */6 * * *"
-  hooks:
-    before:
-      - |
-        set -eu
-        umask 077
-        mkdir -p /var/backups/nobackups/mysql
-        mysqldump --defaults-extra-file=/root/.my.cnf --all-databases \
-          --single-transaction --quick --routines --triggers --events \
-          > /var/backups/nobackups/mysql/all.sql
-    after:
-      - rm -f /var/backups/nobackups/mysql/all.sql
-  retention: { keep_last: 28 }
-```
+    - name: mysql
+      databases:
+        - type: mysql             # or mariadb
+          container: my-mysql
+          password: ${MYSQL_ROOT_PASSWORD}
+      destinations: [offsite]
+      schedule: "0 */6 * * *"
+      retention: { keep_last: 28 }
+    ```
 
-On MariaDB 11+ the tool is called `mariadb-dump` (same flags). **In Docker**, the official images keep the root password in the container's environment:
+Use `type: mariadb` for MariaDB (it uses `mariadb-dump`, which MariaDB 11 images ship instead of `mysqldump`). A read-only user with `SELECT, SHOW VIEW, TRIGGER, LOCK TABLES, EVENT` is enough.
 
-```yaml
-    before:
-      - |
-        set -eu
-        umask 077
-        mkdir -p /var/backups/nobackups/mysql
-        docker exec my-mysql sh -c 'exec mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --all-databases --single-transaction --routines --triggers --events' \
-          > /var/backups/nobackups/mysql/all.sql
-```
-
-(Use `$MARIADB_ROOT_PASSWORD` and `mariadb-dump` for the `mariadb` image.)
-
-**Restore:** `mysql --defaults-extra-file=/root/.my.cnf < /tmp/r/var/backups/nobackups/mysql/all.sql`
+**Restore:** `mysql -u root -p < mysql.sql` (the dump recreates its databases).
 
 ---
 
@@ -425,78 +444,57 @@ On MariaDB 11+ the tool is called `mariadb-dump` (same flags). **In Docker**, th
 
 ```yaml
 - name: mongodb
-  sources: [/var/backups/nobackups/mongodb]
+  databases:
+    - type: mongodb
+      container: my-mongo          # leave out to use mongodump on the host
+      user: admin
+      password: ${MONGO_PASSWORD}
+      # database: app              # leave out to dump everything
+      # options: ["--oplog"]       # replica sets: point-in-time consistent dump
   destinations: [offsite]
   schedule: "0 */6 * * *"
-  compression: none          # mongodump --gzip already compresses
-  hooks:
-    before:
-      - |
-        set -eu
-        umask 077
-        mkdir -p /var/backups/nobackups/mongodb
-        mongodump --uri="mongodb://backup:${MONGO_BACKUP_PASSWORD}@localhost:27017/?authSource=admin" \
-          --archive=/var/backups/nobackups/mongodb/dump.archive.gz --gzip
-        # on a replica set, add --oplog for a point-in-time consistent dump
-    after:
-      - rm -f /var/backups/nobackups/mongodb/dump.archive.gz
+  retention: { keep_last: 28 }
 ```
 
-`${MONGO_BACKUP_PASSWORD}` is filled in from `nobackups.env` when the config loads. In Docker: `docker exec my-mongo mongodump --archive --gzip -u root -p "$PASS" > /var/backups/nobackups/mongodb/dump.archive.gz`.
-
-**Restore:** `mongorestore --archive=dump.archive.gz --gzip --drop`
+**Restore:** `mongorestore -u admin -p --archive=mongodb.archive --drop`
 
 ---
 
 ### Redis / Valkey: in-memory, not out of mind
 
-`redis-cli --rdb` asks the server for a fresh snapshot and writes it locally:
-
 ```yaml
 - name: redis
-  sources: [/var/backups/nobackups/redis]
+  databases:
+    - type: redis
+      container: my-redis          # leave out to use redis-cli on the host
+      password: ${REDIS_PASSWORD}  # if requirepass / ACLs are set
+      # user: backup               # ACL user
   destinations: [offsite]
   schedule: "0 * * * *"
-  hooks:
-    before:
-      - |
-        set -eu
-        umask 077
-        mkdir -p /var/backups/nobackups/redis
-        redis-cli --rdb /var/backups/nobackups/redis/dump.rdb
-        # with a password: REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --rdb ...
-        # docker (Redis 7+): docker exec my-redis redis-cli --rdb - > /var/backups/nobackups/redis/dump.rdb
-    after:
-      - rm -f /var/backups/nobackups/redis/dump.rdb
   retention: { keep_last: 48 }
 ```
 
-**Restore:** stop Redis, copy `dump.rdb` into its data directory (`/var/lib/redis`), start Redis.
+**Restore:** stop Redis, replace `dump.rdb` in its data directory with the restored `redis.rdb`, then start Redis.
 
 ---
 
 ### SQLite: small database, big regrets if you lose it
 
-This also covers apps built on it: Vaultwarden, Gitea, Uptime Kuma, Home Assistant…
-
-Copying a live SQLite file can catch it mid-write. `sqlite3 .backup` makes a safe copy without stopping the app:
+Covers Vaultwarden, Gitea, Uptime Kuma, Home Assistant and friends. `sqlite3 .backup` makes a consistent copy while the app keeps running (install `sqlite3` on the host):
 
 ```yaml
 - name: vaultwarden
-  sources:
-    - /opt/vaultwarden/data
-    - /var/backups/nobackups/vaultwarden   # the safe copy made by the hook
-  exclude: ["db.sqlite3*"]                 # live DB + WAL files from the data dir
+  sources: [/opt/vaultwarden/data]
+  exclude: ["db.sqlite3*"]                 # the live database + WAL files
+  databases:
+    - type: sqlite
+      name: vaultwarden
+      path: /opt/vaultwarden/data/db.sqlite3
   destinations: [offsite]
   schedule: "0 */4 * * *"
-  hooks:
-    before:
-      - |
-        set -eu
-        umask 077
-        mkdir -p /var/backups/nobackups/vaultwarden
-        sqlite3 /opt/vaultwarden/data/db.sqlite3 ".backup '/var/backups/nobackups/vaultwarden/vaultwarden.sqlite3'"
 ```
+
+**Restore:** stop the app, copy `nobackups-databases/vaultwarden.sqlite` over the original, delete its `-wal`/`-shm` files, start the app.
 
 ---
 
@@ -508,25 +506,18 @@ Copying a live SQLite file can catch it mid-write. `sqlite3 .backup` makes a saf
 
 ```yaml
 - name: virtfusion-control
-  sources:
-    - /opt/virtfusion                       # app, config, .env
-    - /var/backups/nobackups/virtfusion
+  sources: [/opt/virtfusion]                # app, config, .env
   exclude: ["*.log"]
+  databases:
+    - name: virtfusion
+      type: mysql
+      user: ${VIRTFUSION_DB_USER}           # DB_USERNAME in the app's .env
+      password: ${VIRTFUSION_DB_PASSWORD}   # DB_PASSWORD in the app's .env
+      database: virtfusion                  # DB_DATABASE in the app's .env
   destinations: [offsite]
   schedule: "0 */6 * * *"
   encryption:
     passphrase: ${BACKUP_PASSPHRASE}        # the .env holds secrets: always encrypt
-  hooks:
-    before:
-      - |
-        set -eu
-        umask 077
-        mkdir -p /var/backups/nobackups/virtfusion
-        # DB name/credentials are in the app's .env (look for DB_DATABASE / DB_USERNAME)
-        mysqldump --defaults-extra-file=/root/.my.cnf --single-transaction --routines --triggers \
-          virtfusion > /var/backups/nobackups/virtfusion/virtfusion.sql
-    after:
-      - rm -f /var/backups/nobackups/virtfusion/virtfusion.sql
   retention: { keep_last: 28, keep_days: 30 }
 ```
 
@@ -583,6 +574,8 @@ A "disaster recovery" job for a server without special workloads. `one_file_syst
     passphrase: ${BACKUP_PASSPHRASE}
   retention: { keep_last: 4 }
 ```
+
+On Docker hosts (Dokploy, Coolify, Portainer…) this job skips all of your apps' data. Pair it with the Docker or Dokploy recipe above.
 
 If `/home` or `/var` are separate filesystems, list them as extra sources, because `one_file_system` won't cross into them from `/`.
 

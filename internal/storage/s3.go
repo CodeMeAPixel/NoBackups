@@ -33,7 +33,7 @@ func NewS3(d *config.Destination) (*S3, error) {
 		Secure: d.UseSSL == nil || *d.UseSSL,
 		Region: d.Region,
 	}
-	if d.PathStyle {
+	if d.PathStyle != nil && *d.PathStyle {
 		opts.BucketLookup = minio.BucketLookupPath
 	} else {
 		opts.BucketLookup = minio.BucketLookupAuto

@@ -1,0 +1,166 @@
+---
+title: "Databases"
+description: "Dump PostgreSQL, MySQL, MariaDB, MongoDB, Redis and SQLite consistently, on the host or inside Docker. No shell scripting required."
+icon: "database"
+---
+
+Copying a running database's files can give you a backup that won't restore. Instead, list your databases on a job and NoBackups dumps each one with the database's own tool before archiving:
+
+```yaml
+jobs:
+  - name: databases
+    databases:
+      - type: postgres
+        container: my-postgres
+        user: postgres
+        password: ${PG_PASSWORD}
+        database: app
+      - type: mysql
+        host: 127.0.0.1
+        user: backup
+        password: ${MYSQL_PASSWORD}
+    destinations: [offsite]
+    schedule: "0 */6 * * *"
+    retention: { keep_last: 28 }
+```
+
+A job can have `databases`, `sources`, or both.
+
+## How it works
+
+1. After the `before` hooks, each database is dumped to a private temporary file in `state_dir/dumps/<job>/`.
+2. The dumps are added to the snapshot under `nobackups-databases/`, next to any `sources`.
+3. The temporary files are deleted, whether the run succeeded or not.
+
+If a dump fails, NoBackups still backs up everything else, but the run is reported as **failed** (Discord shows which database and why). **Retention is skipped for that run**, so old snapshots with good dumps of that database aren't deleted while it's broken.
+
+Credentials never appear on the command line, where other users could see them with `ps`. Passwords go to the dump tool through its own environment variable (`PGPASSWORD`, `MYSQL_PWD`, `REDISCLI_AUTH`). MongoDB has no such variable, so its password goes into a private temporary config file that's removed straight after.
+
+## Options
+
+<ParamField path="type" type="string" required>
+  `postgres`, `mysql`, `mariadb`, `mongodb`, `redis` or `sqlite`.
+</ParamField>
+
+<ParamField path="name" type="string" default="type, plus the database name">
+  File name inside the snapshot, e.g. `postgres-app` → `nobackups-databases/postgres-app.dump`. Must be unique within the job.
+</ParamField>
+
+<ParamField path="container" type="string">
+  Dump from inside this running Docker container using the tools in its image, so nothing needs installing on the host. Matches the exact container name, or a unique prefix, so Swarm (`dokploy-postgres.1.abc…`) and Compose (`app-db-1`) names work without the suffix.
+</ParamField>
+
+<ParamField path="host" type="string">
+  Server address. Leave it out to use the local socket (also inside a container).
+</ParamField>
+
+<ParamField path="port" type="integer">
+  Leave it out for the default port.
+</ParamField>
+
+<ParamField path="user" type="string" default="postgres (PostgreSQL), root (MySQL/MariaDB)">
+  For MongoDB, authenticates against `auth_database` (default `admin`). For Redis, sets the ACL user.
+</ParamField>
+
+<ParamField path="password" type="string">
+  Use `${VAR}` so it lives in `nobackups.env`, not the config.
+</ParamField>
+
+<ParamField path="database" type="string">
+  The database to dump. Leave it out to dump **all** databases (not available for Redis, which always dumps the whole server).
+</ParamField>
+
+<ParamField path="path" type="string">
+  SQLite only: absolute path to the database file.
+</ParamField>
+
+<ParamField path="auth_database" type="string" default="admin">
+  MongoDB only.
+</ParamField>
+
+<ParamField path="options" type="string[]">
+  Extra arguments passed to the dump tool, e.g. `["--exclude-table=audit_log"]` for `pg_dump`.
+</ParamField>
+
+## What each type runs
+
+| Type | Tool | In the snapshot | Notes |
+|---|---|---|---|
+| `postgres` | `pg_dump -Fc` with `database`, `pg_dumpall` without | `.dump` / `.sql` | `pg_dumpall` includes roles |
+| `mysql` | `mysqldump --single-transaction` | `.sql` | Consistent for InnoDB without locking |
+| `mariadb` | `mariadb-dump` (falls back to `mysqldump`) | `.sql` | Works with MariaDB 11 images, which have no `mysqldump` |
+| `mongodb` | `mongodump --archive` | `.archive` | Needs mongodump 100.3+ |
+| `redis` | `redis-cli --rdb` | `.rdb` | A point-in-time snapshot of the whole server |
+| `sqlite` | `sqlite3 .backup` | `.sqlite` | Safe while the app is writing. Host only. |
+
+Without `container`, the tool must be installed on the server (e.g. `apt install postgresql-client`), ideally at least the server's version.
+
+## Examples
+
+<Tabs>
+  <Tab title="Docker / Dokploy">
+    ```yaml
+    databases:
+      - name: dokploy
+        type: postgres
+        container: dokploy-postgres
+        user: dokploy
+        password: ${DOKPLOY_DB_PASSWORD}
+        database: dokploy
+      - type: mariadb
+        container: wordpress-db
+        password: ${WORDPRESS_DB_ROOT_PASSWORD}
+      - type: redis
+        container: cache
+    ```
+  </Tab>
+  <Tab title="On the host">
+    ```yaml
+    databases:
+      - type: postgres
+        password: ${PG_PASSWORD}
+      - type: mysql
+        user: backup
+        password: ${MYSQL_PASSWORD}
+        database: shop
+      - type: mongodb
+        user: backup
+        password: ${MONGO_PASSWORD}
+      - type: sqlite
+        path: /opt/vaultwarden/data/db.sqlite3
+    ```
+  </Tab>
+  <Tab title="Remote server">
+    ```yaml
+    databases:
+      - type: postgres
+        host: db.internal
+        port: 5432
+        user: backup
+        password: ${PG_PASSWORD}
+        database: app
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+  Give backups a read-only database user where you can. MySQL/MariaDB needs `SELECT, SHOW VIEW, TRIGGER, LOCK TABLES, EVENT`. PostgreSQL needs read access to everything you dump (or a superuser for `pg_dumpall`).
+</Tip>
+
+## Restoring
+
+```bash
+nobackups restore databases --target /tmp/r --path nobackups-databases
+ls /tmp/r/nobackups-databases
+```
+
+| Type | Restore with |
+|---|---|
+| `postgres` (`.dump`) | `pg_restore -d app --clean --if-exists postgres-app.dump` |
+| `postgres` (`.sql`) | `psql -f postgres.sql postgres` |
+| `mysql` / `mariadb` | `mysql < mariadb-shop.sql` (it recreates the database) |
+| `mongodb` | `mongorestore --archive=mongodb.archive --drop` |
+| `redis` | Stop Redis, replace `dump.rdb` in its data directory, start Redis |
+| `sqlite` | Stop the app, copy the `.sqlite` file over the original, start the app |
+
+For a container, pipe the file in with `docker exec -i <container> ... < file`, e.g. `docker exec -i my-postgres pg_restore -U postgres -d app --clean --if-exists < postgres-app.dump`.
