@@ -34,6 +34,12 @@ Names may contain letters, digits, `.`, `_` and `-`.
   ```yaml
   prefix: servers/{hostname}     # → servers/web01/<job>/...
   ```
+
+  If the value **starts** with `{`, quote it, or YAML reads it as a map:
+
+  ```yaml
+  prefix: "{hostname}"
+  ```
 </ParamField>
 
 ## S3 options
