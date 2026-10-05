@@ -30,10 +30,10 @@ Everything happens **on the server**, so it doesn't matter whether your own mach
 ```sh
 git clone https://github.com/CodeMeAPixel/NoBackups
 cd NoBackups
-sudo ./install.sh
+sudo sh install.sh
 ```
 
-If the server has Go 1.24+, the installer builds from source. Otherwise it downloads the release binary for the server's CPU and verifies its checksum. Upgrading is `git pull && sudo ./install.sh`.
+If the server has Go 1.24+, the installer builds from source. Otherwise it downloads the release binary for the server's CPU and verifies its checksum. Upgrading is `git pull && sudo sh install.sh`.
 
 Other options:
 
