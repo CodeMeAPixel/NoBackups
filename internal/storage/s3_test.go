@@ -91,7 +91,7 @@ func testS3(t *testing.T, srv *httptest.Server) *S3 {
 	tr := true
 	s, err := NewS3(&config.Destination{
 		Name: "alarik", Type: "s3", Endpoint: strings.TrimPrefix(srv.URL, "https://"), UseSSL: &tr, InsecureSkipVerify: true,
-		Bucket: "bkt", AccessKeyID: "k", SecretAccessKey: "s", Region: "us-east-1", PathStyle: true, PartSizeMB: 5,
+		Bucket: "bkt", AccessKeyID: "k", SecretAccessKey: "s", Region: "us-east-1", PathStyle: &tr, PartSizeMB: 5,
 	})
 	if err != nil {
 		t.Fatal(err)

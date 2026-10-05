@@ -20,7 +20,12 @@
         "groups": [
           {
             "group": "Get started",
-            "pages": ["index", "quickstart", "installation", "how-it-works"]
+            "pages": [
+              "index",
+              "quickstart",
+              "installation",
+              "how-it-works"
+            ]
           },
           {
             "group": "Configuration",
@@ -36,7 +41,10 @@
           },
           {
             "group": "Operating",
-            "pages": ["guides/restoring", "guides/operations"]
+            "pages": [
+              "guides/restoring",
+              "guides/operations"
+            ]
           }
         ]
       },
@@ -45,11 +53,16 @@
         "groups": [
           {
             "group": "Before you start",
-            "pages": ["recipes/overview"]
+            "pages": [
+              "recipes/overview"
+            ]
           },
           {
             "group": "Containers",
-            "pages": ["recipes/docker"]
+            "pages": [
+              "recipes/docker",
+              "recipes/dokploy"
+            ]
           },
           {
             "group": "Databases",
@@ -63,7 +76,11 @@
           },
           {
             "group": "Servers & platforms",
-            "pages": ["recipes/virtfusion", "recipes/whole-server", "recipes/web-and-mail"]
+            "pages": [
+              "recipes/virtfusion",
+              "recipes/whole-server",
+              "recipes/web-and-mail"
+            ]
           }
         ]
       },
@@ -72,7 +89,11 @@
         "groups": [
           {
             "group": "Reference",
-            "pages": ["reference/cli", "reference/config", "reference/development"]
+            "pages": [
+              "reference/cli",
+              "reference/config",
+              "reference/development"
+            ]
           }
         ]
       }
@@ -85,7 +106,12 @@
     }
   },
   "contextual": {
-    "options": ["copy", "view", "chatgpt", "claude"]
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude"
+    ]
   },
   "footer": {
     "socials": {

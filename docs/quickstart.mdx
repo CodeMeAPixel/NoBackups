@@ -42,8 +42,7 @@ icon: "rocket"
     ```yaml /etc/nobackups/config.yaml
     destinations:
       hetzner:
-        type: s3
-        endpoint: fsn1.your-objectstorage.com
+        type: hetzner
         region: fsn1
         bucket: my-backups
         access_key_id: ${HETZNER_ACCESS_KEY}

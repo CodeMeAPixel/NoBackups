@@ -311,7 +311,11 @@ func cmdList(cfg *config.Config) error {
 		} else if d.Prefix != "" {
 			loc = filepath.Join(d.Path, d.Prefix)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", n, d.Type, loc)
+		kind := d.Type
+		if d.Provider != "" {
+			kind = d.Provider
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\n", n, kind, loc)
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "JOB\tSCHEDULE\tNEXT RUN\tDESTINATIONS\tSOURCES")

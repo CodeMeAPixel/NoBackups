@@ -7,7 +7,7 @@ NoBackups is named after the situation it gets you out of. It's one small static
 
 **What's in the box**
 
-- **Any S3-compatible storage**: Hetzner Object Storage, RustFS, MinIO, Garage, Alarik, AWS S3, Backblaze B2, Cloudflare R2, … plus local directories (second disk, NFS). Your data, your bucket list.
+- **Any S3-compatible storage**: Alarik, Hetzner Object Storage, RustFS, MinIO, Garage, AWS S3, Backblaze B2, Cloudflare R2, … plus local directories (second disk, NFS). Your data, your bucket list.
 - **Multiple destinations per job**: the archive is built once and streamed to every destination in parallel. If one destination fails, the others still finish, so 3-2-1 takes one line of config.
 - **Streaming**: nothing is staged on local disk. Memory use is about `part_size_mb` per S3 destination. Light enough for even the most *byte*-sized VPS.
 - **zstd / gzip compression** and **age encryption** (passphrase or public keys). Squeezed, sealed, delivered.
@@ -21,7 +21,7 @@ NoBackups is named after the situation it gets you out of. It's one small static
 
 📚 **Full documentation** lives in [`docs/`](docs/) (a [Mintlify](https://mintlify.com) site: run `make docs` to preview it locally).
 
-Hungry for examples? The [Recipes](#recipes-the-backup-cookbook) cover Docker, PostgreSQL, MySQL/MariaDB, MongoDB, Redis, SQLite, VirtFusion and whole-server setups.
+Hungry for examples? The [Recipes](#recipes-the-backup-cookbook) cover Docker, Dokploy, PostgreSQL, MySQL/MariaDB, MongoDB, Redis, SQLite, VirtFusion and whole-server setups.
 
 ## Install: back it up, then back it in
 
@@ -87,8 +87,7 @@ A minimal config:
 ```yaml
 destinations:
   hetzner:
-    type: s3
-    endpoint: fsn1.your-objectstorage.com
+    type: hetzner
     region: fsn1
     bucket: my-backups
     access_key_id: ${HETZNER_ACCESS_KEY}
@@ -117,12 +116,12 @@ Run `nobackups init -c ./config.yaml` to get the fully commented example, or rea
 
 | Field | Applies to | Notes |
 |---|---|---|
-| `type` | all | `s3` or `local` |
+| `type` | all | `local`, `s3`, or a provider shorthand (`alarik`, `rustfs`, `minio`, `garage`, `hetzner`, `aws`, `r2`, `b2`, `digitalocean`, `wasabi`) that fills in that provider's defaults |
 | `prefix` | all | Key prefix / subdirectory. `{hostname}` is replaced by the server's hostname, so one bucket can serve a whole fleet. |
-| `endpoint` | s3 | Host, optionally with port. Prefix with `http://` for plain HTTP. |
+| `endpoint` | s3 | Host, optionally with port. Prefix with `http://` for plain HTTP. Derived from `region` for `hetzner`, `aws`, `b2`, `digitalocean` and `wasabi`. |
 | `bucket`, `region` | s3 | `region` defaults to `us-east-1`. Most self-hosted stores ignore it. |
 | `access_key_id`, `secret_access_key`, `session_token` | s3 | |
-| `path_style` | s3 | Set to `true` for most self-hosted stores (RustFS, MinIO, Garage) |
+| `path_style` | s3 | Defaults to `true` for `alarik`, `rustfs`, `minio` and `garage`; otherwise picked automatically |
 | `storage_class` | s3 | e.g. `STANDARD_IA` on AWS |
 | `part_size_mb` | s3 | Multipart chunk size, default 64. Max object size is 10,000 × this. |
 | `ca_file` / `insecure_skip_verify` | s3 | For private CAs / self-signed certs |
@@ -131,11 +130,13 @@ Run `nobackups init -c ./config.yaml` to get the fully commented example, or rea
 Provider examples:
 
 ```yaml
-hetzner:   { type: s3, endpoint: nbg1.your-objectstorage.com, region: nbg1, bucket: b, ... }
-rustfs:    { type: s3, endpoint: "http://10.0.0.5:9000", path_style: true, bucket: b, ... }
-aws:       { type: s3, endpoint: s3.eu-central-1.amazonaws.com, region: eu-central-1, bucket: b, ... }
-r2:        { type: s3, endpoint: <account>.r2.cloudflarestorage.com, region: auto, bucket: b, ... }
-b2:        { type: s3, endpoint: s3.eu-central-003.backblazeb2.com, region: eu-central-003, bucket: b, ... }
+alarik:    { type: alarik, endpoint: s3.example.com, bucket: b, ... }
+hetzner:   { type: hetzner, region: nbg1, bucket: b, ... }
+rustfs:    { type: rustfs, endpoint: "http://10.0.0.5:9000", bucket: b, ... }
+aws:       { type: aws, region: eu-central-1, bucket: b, ... }
+r2:        { type: r2, endpoint: <account>.r2.cloudflarestorage.com, bucket: b, ... }
+b2:        { type: b2, region: eu-central-003, bucket: b, ... }
+other:     { type: s3, endpoint: s3.example.net, region: us-east-1, bucket: b, ... }
 ```
 
 ### Jobs: what to save, and when
@@ -307,6 +308,57 @@ docker compose -f /opt/myapp/compose.yaml down
 nobackups restore docker-app --target / --path var/lib/docker/volumes/myapp_data
 docker compose -f /opt/myapp/compose.yaml up -d
 ```
+
+---
+
+### Dokploy: deploy with confidence, restore with even more
+
+On a Dokploy server nearly everything lives in Docker, so the whole-server job below (which skips `/var/lib/docker`) backs up **none of your apps** on its own. Add these two jobs.
+
+**The panel:** `/etc/dokploy` plus a consistent dump of Dokploy's own Postgres, done the same way Dokploy's web-server backup does it:
+
+```yaml
+- name: dokploy
+  sources:
+    - /etc/dokploy
+    - /var/backups/nobackups/dokploy
+  exclude:
+    - /etc/dokploy/volume-backups
+    - /etc/dokploy/logs
+  destinations: [offsite]
+  schedule: "0 3 * * *"
+  encryption:
+    passphrase: ${BACKUP_PASSPHRASE}
+  hooks:
+    before:
+      - |
+        set -eu
+        umask 077
+        mkdir -p /var/backups/nobackups/dokploy
+        c=$(docker ps --filter name=dokploy-postgres --filter status=running -q | head -n 1)
+        [ -n "$c" ] || { echo "dokploy-postgres is not running"; exit 1; }
+        docker exec "$c" pg_dump -Fc -U dokploy -d dokploy > /var/backups/nobackups/dokploy/dokploy.dump
+    after:
+      - rm -f /var/backups/nobackups/dokploy/dokploy.dump
+  retention: { keep_last: 14 }
+```
+
+**Your apps:** named Docker volumes, minus the panel database's raw files (the dump above covers it):
+
+```yaml
+- name: dokploy-volumes
+  sources: [/var/lib/docker/volumes]
+  exclude:
+    - /var/lib/docker/volumes/dokploy-postgres
+    - /var/lib/docker/volumes/backingFsBlockDev
+  destinations: [offsite]
+  schedule: "30 3 * * *"
+  encryption:
+    passphrase: ${BACKUP_PASSPHRASE}
+  retention: { keep_last: 7, keep_days: 30 }
+```
+
+Volumes are copied live. For databases you created *in* Dokploy, turn on Dokploy's own scheduled database backups (they can upload to the same bucket) or dump them with a hook as in the recipes below. Restore steps are in the [Dokploy docs page](docs/recipes/dokploy.mdx).
 
 ---
 
@@ -583,6 +635,8 @@ A "disaster recovery" job for a server without special workloads. `one_file_syst
     passphrase: ${BACKUP_PASSPHRASE}
   retention: { keep_last: 4 }
 ```
+
+On Docker hosts (Dokploy, Coolify, Portainer…) this job skips all of your apps' data. Pair it with the Docker or Dokploy recipe above.
 
 If `/home` or `/var` are separate filesystems, list them as extra sources, because `one_file_system` won't cross into them from `/`.
 

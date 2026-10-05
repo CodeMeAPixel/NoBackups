@@ -100,3 +100,54 @@ func TestUnquotedBraceValueHint(t *testing.T) {
 		t.Fatalf("quoted prefix: %v %+v", err, c)
 	}
 }
+
+func TestProviderShorthands(t *testing.T) {
+	cfg := `
+destinations:
+  alarik: {type: alarik, endpoint: cdn.example.com, bucket: b, access_key_id: k, secret_access_key: s}
+  hetzner: {type: hetzner, region: nbg1, bucket: b, access_key_id: k, secret_access_key: s}
+  aws: {type: aws, region: eu-west-1, bucket: b, access_key_id: k, secret_access_key: s}
+  minio: {type: minio, endpoint: "http://10.0.0.5:9000", path_style: false, bucket: b, access_key_id: k, secret_access_key: s}
+  custom: {type: hetzner, region: fsn1, endpoint: s3.internal, bucket: b, access_key_id: k, secret_access_key: s}
+jobs:
+  - name: j
+    sources: [/etc]
+    destinations: [alarik]
+`
+	c, err := Parse([]byte(cfg), "test.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]struct {
+		endpoint, region string
+		pathStyle        bool
+	}{
+		"alarik":  {"cdn.example.com", "us-east-1", true},
+		"hetzner": {"nbg1.your-objectstorage.com", "nbg1", false},
+		"aws":     {"s3.eu-west-1.amazonaws.com", "eu-west-1", false},
+		"minio":   {"10.0.0.5:9000", "us-east-1", false},
+		"custom":  {"s3.internal", "fsn1", false},
+	}
+	for name, w := range want {
+		d := c.Destinations[name]
+		if d.Type != "s3" || d.Provider == "" || d.Endpoint != w.endpoint || d.Region != w.region || *d.PathStyle != w.pathStyle {
+			t.Errorf("%s: type=%s provider=%s endpoint=%s region=%s path_style=%v", name, d.Type, d.Provider, d.Endpoint, d.Region, *d.PathStyle)
+		}
+	}
+	if *c.Destinations["minio"].UseSSL {
+		t.Error("http:// endpoint should disable TLS for provider types too")
+	}
+}
+
+func TestProviderNeedsRegion(t *testing.T) {
+	cfg := `
+destinations:
+  h: {type: hetzner, bucket: b, access_key_id: k, secret_access_key: s}
+  x: {type: dropbox}
+jobs: [{name: j, sources: [/etc], destinations: [h]}]
+`
+	_, err := Parse([]byte(cfg), "test.yaml")
+	if err == nil || !strings.Contains(err.Error(), "region is required for hetzner (e.g. fsn1)") || !strings.Contains(err.Error(), "alarik, aws, b2") {
+		t.Fatalf("got %v", err)
+	}
+}

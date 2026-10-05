@@ -25,7 +25,7 @@ Names may contain letters, digits, `.`, `_` and `-`.
 ## Common options
 
 <ParamField path="type" type="string" required>
-  `s3` for any S3-compatible object store, or `local` for a directory.
+  `local` for a directory, `s3` for any S3-compatible object store, or a [provider shorthand](#providers) such as `alarik` or `hetzner` that fills in that provider's defaults.
 </ParamField>
 
 <ParamField path="prefix" type="string">
@@ -44,8 +44,8 @@ Names may contain letters, digits, `.`, `_` and `-`.
 
 ## S3 options
 
-<ParamField path="endpoint" type="string" required>
-  Host, with an optional port, e.g. `fsn1.your-objectstorage.com` or `10.0.0.5:9000`. Prefix with `http://` to use plain HTTP; `https://` is the default.
+<ParamField path="endpoint" type="string">
+  Host, with an optional port, e.g. `cdn.example.com` or `10.0.0.5:9000`. Required unless the provider derives it from `region`. Prefix with `http://` to use plain HTTP; `https://` is the default.
 </ParamField>
 
 <ParamField path="bucket" type="string" required>
@@ -63,8 +63,8 @@ Names may contain letters, digits, `.`, `_` and `-`.
   Most self-hosted stores ignore this.
 </ParamField>
 
-<ParamField path="path_style" type="boolean" default="false">
-  Use `https://endpoint/bucket/key` addressing instead of `https://bucket.endpoint/key`. Most self-hosted stores (RustFS, MinIO, Garage) need `true`.
+<ParamField path="path_style" type="boolean" default="depends on the provider">
+  Use `https://endpoint/bucket/key` addressing instead of `https://bucket.endpoint/key`. Most self-hosted stores need `true`, which is the default for the `alarik`, `rustfs`, `minio` and `garage` types. With plain `type: s3`, NoBackups picks automatically.
 </ParamField>
 
 <ParamField path="use_ssl" type="boolean" default="true">
@@ -93,54 +93,66 @@ Names may contain letters, digits, `.`, `_` and `-`.
   Absolute path to a directory, e.g. a second disk or an NFS mount. Snapshots are written to a `.partial` file first, then renamed, so a half-written file never looks like a snapshot.
 </ParamField>
 
-## Provider examples
+## Providers
+
+Instead of `type: s3`, you can name the provider. It's still S3 underneath, but NoBackups fills in that provider's defaults, and `nobackups list` shows which provider each destination uses. Anything you set yourself (`endpoint`, `region`, `path_style`) overrides the defaults.
+
+| `type` | Defaults |
+|---|---|
+| `alarik`, `rustfs`, `minio` | `path_style: true`. Set `endpoint` to your server. |
+| `garage` | `path_style: true`, `region: garage` |
+| `hetzner` | Endpoint from `region` (`fsn1`, `nbg1`, `hel1`) → `fsn1.your-objectstorage.com` |
+| `aws` | Endpoint from `region` → `s3.eu-central-1.amazonaws.com`. Region defaults to `us-east-1`. |
+| `b2` | Endpoint from `region` → `s3.eu-central-003.backblazeb2.com` |
+| `digitalocean` | Endpoint from `region` → `ams3.digitaloceanspaces.com` |
+| `wasabi` | Endpoint from `region` → `s3.eu-central-1.wasabisys.com` |
+| `r2` | `region: auto`. Set `endpoint` to `<account-id>.r2.cloudflarestorage.com`. |
+| `s3` | Nothing filled in: set `endpoint` for any other S3-compatible service |
 
 <Tabs>
+  <Tab title="Alarik">
+    [Alarik](https://github.com/achtungsoftware/alarik) is a self-hosted, S3-compatible store.
+
+    ```yaml
+    alarik:
+      type: alarik
+      endpoint: s3.example.com      # or http://10.0.0.5:8080 for plain HTTP
+      bucket: backups
+      access_key_id: ${ALARIK_ACCESS_KEY}
+      secret_access_key: ${ALARIK_SECRET_KEY}
+      prefix: "{hostname}"
+    ```
+
+    If the endpoint is behind Cloudflare, see [Troubleshooting](#troubleshooting).
+  </Tab>
   <Tab title="Hetzner">
-    Endpoints: `fsn1`, `nbg1` and `hel1` `.your-objectstorage.com`. Create credentials under **Object Storage → Security credentials** in the Hetzner Console.
+    Create credentials under **Object Storage → Security credentials** in the Hetzner Console.
 
     ```yaml
     hetzner:
-      type: s3
-      endpoint: fsn1.your-objectstorage.com
-      region: fsn1
+      type: hetzner
+      region: fsn1                  # fsn1, nbg1 or hel1
       bucket: my-backups
       access_key_id: ${HETZNER_ACCESS_KEY}
       secret_access_key: ${HETZNER_SECRET_KEY}
       prefix: servers/{hostname}
     ```
   </Tab>
-  <Tab title="RustFS / MinIO">
+  <Tab title="RustFS / MinIO / Garage">
     ```yaml
     rustfs:
-      type: s3
-      endpoint: http://rustfs.internal:9000     # or https:// with ca_file
+      type: rustfs                  # or minio / garage
+      endpoint: http://rustfs.internal:9000
       bucket: backups
       access_key_id: ${RUSTFS_ACCESS_KEY}
       secret_access_key: ${RUSTFS_SECRET_KEY}
-      path_style: true
       prefix: "{hostname}"
-    ```
-  </Tab>
-  <Tab title="Alarik / Garage">
-    [Alarik](https://github.com/achtungsoftware/alarik) and other self-hosted S3-compatible stores work the same way as RustFS. If you put the endpoint behind Cloudflare, see [Troubleshooting](#troubleshooting). Use the endpoint and region your server is configured with, and `path_style: true` unless you've set up virtual-host-style bucket DNS.
-
-    ```yaml
-    alarik:
-      type: s3
-      endpoint: https://s3.example.internal
-      region: us-east-1         # match the region your server is configured with
-      bucket: backups
-      access_key_id: ${ALARIK_ACCESS_KEY}
-      secret_access_key: ${ALARIK_SECRET_KEY}
-      path_style: true
     ```
   </Tab>
   <Tab title="AWS S3">
     ```yaml
     aws:
-      type: s3
-      endpoint: s3.eu-central-1.amazonaws.com
+      type: aws
       region: eu-central-1
       bucket: my-backups
       access_key_id: ${AWS_ACCESS_KEY_ID}
@@ -151,9 +163,8 @@ Names may contain letters, digits, `.`, `_` and `-`.
   <Tab title="Cloudflare R2">
     ```yaml
     r2:
-      type: s3
+      type: r2
       endpoint: <account-id>.r2.cloudflarestorage.com
-      region: auto
       bucket: my-backups
       access_key_id: ${R2_ACCESS_KEY}
       secret_access_key: ${R2_SECRET_KEY}
@@ -162,12 +173,22 @@ Names may contain letters, digits, `.`, `_` and `-`.
   <Tab title="Backblaze B2">
     ```yaml
     b2:
-      type: s3
-      endpoint: s3.eu-central-003.backblazeb2.com
+      type: b2
       region: eu-central-003
       bucket: my-backups
       access_key_id: ${B2_KEY_ID}
       secret_access_key: ${B2_APP_KEY}
+    ```
+  </Tab>
+  <Tab title="Other S3">
+    ```yaml
+    other:
+      type: s3
+      endpoint: s3.example.net
+      region: us-east-1
+      bucket: my-backups
+      access_key_id: ${S3_ACCESS_KEY}
+      secret_access_key: ${S3_SECRET_KEY}
     ```
   </Tab>
   <Tab title="Local / NFS">
