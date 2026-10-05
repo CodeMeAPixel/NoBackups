@@ -117,7 +117,7 @@ Names may contain letters, digits, `.`, `_` and `-`.
     ```
   </Tab>
   <Tab title="Alarik / Garage">
-    Other self-hosted S3-compatible stores work the same way as RustFS. Use the endpoint and region your server is configured with, and `path_style: true` unless you've set up virtual-host-style bucket DNS.
+    [Alarik](https://github.com/achtungsoftware/alarik) and other self-hosted S3-compatible stores work the same way as RustFS. If you put the endpoint behind Cloudflare, see [Troubleshooting](#troubleshooting). Use the endpoint and region your server is configured with, and `path_style: true` unless you've set up virtual-host-style bucket DNS.
 
     ```yaml
     alarik:
@@ -190,3 +190,20 @@ For each destination, this checks the bucket exists (S3), then writes, lists and
 ✓ hetzner              ok
 ✗ rustfs               write: The Access Key Id you provided does not exist in our records.
 ```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="ETag mismatch for part 1" icon="triangle-exclamation">
+    Usually means a CDN or reverse proxy sits between NoBackups and the storage server and rewrites the `ETag` header. Cloudflare's orange-cloud proxy is the usual suspect: it can turn `"abc"` into the weak form `W/"abc"`, which some servers (e.g. Alarik) then fail to match.
+
+    NoBackups handles weakened ETags, so updating fixes the error. You're still better off pointing `endpoint` at a hostname that **isn't** proxied, such as a DNS-only (grey-cloud) record or the server's own address. Proxying backups through a CDN adds latency, and Cloudflare limits request bodies to 100 MB on most plans, so keep `part_size_mb` below that if you must proxy.
+  </Accordion>
+  <Accordion title="See exactly what the server returns" icon="magnifying-glass">
+    Set `NOBACKUPS_S3_TRACE=1` to print every S3 request and response header (signatures are redacted):
+
+    ```bash
+    sudo NOBACKUPS_S3_TRACE=1 nobackups check
+    ```
+  </Accordion>
+</AccordionGroup>

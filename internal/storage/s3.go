@@ -1,9 +1,12 @@
 package storage
 
 import (
+	"bytes"
 	"context"
+	"crypto/md5"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -62,6 +65,9 @@ func NewS3(d *config.Destination) (*S3, error) {
 	if err != nil {
 		return nil, fmt.Errorf("destination %s: %w", d.Name, err)
 	}
+	if os.Getenv("NOBACKUPS_S3_TRACE") != "" {
+		client.TraceOn(os.Stderr)
+	}
 	return &S3{
 		name:     d.Name,
 		client:   client,
@@ -75,12 +81,69 @@ func NewS3(d *config.Destination) (*S3, error) {
 func (s *S3) Name() string { return s.name }
 
 func (s *S3) Put(ctx context.Context, key string, r io.Reader) error {
-	_, err := s.client.PutObject(ctx, s.bucket, joinKey(s.prefix, key), r, -1, minio.PutObjectOptions{
-		ContentType:  "application/octet-stream",
-		PartSize:     s.partSize,
-		StorageClass: s.class,
-	})
-	return err
+	return s.upload(ctx, joinKey(s.prefix, key), r, int64(s.partSize))
+}
+
+func (s *S3) upload(ctx context.Context, object string, r io.Reader, partSize int64) error {
+	core := minio.Core{Client: s.client}
+	opts := minio.PutObjectOptions{ContentType: "application/octet-stream", StorageClass: s.class}
+	buf := make([]byte, partSize)
+
+	n, err := io.ReadFull(r, buf)
+	if err == io.EOF || err == io.ErrUnexpectedEOF {
+		_, err = core.PutObject(ctx, s.bucket, object, bytes.NewReader(buf[:n]), int64(n), md5Base64(buf[:n]), "", opts)
+		return err
+	}
+	if err != nil {
+		return err
+	}
+
+	uploadID, err := core.NewMultipartUpload(ctx, s.bucket, object, opts)
+	if err != nil {
+		return err
+	}
+	parts, err := s.uploadParts(ctx, core, object, uploadID, r, buf, n)
+	if err == nil {
+		_, err = core.CompleteMultipartUpload(ctx, s.bucket, object, uploadID, parts, opts)
+	}
+	if err != nil {
+		_ = core.AbortMultipartUpload(context.WithoutCancel(ctx), s.bucket, object, uploadID)
+		return err
+	}
+	return nil
+}
+
+func (s *S3) uploadParts(ctx context.Context, core minio.Core, object, uploadID string, r io.Reader, buf []byte, n int) ([]minio.CompletePart, error) {
+	var parts []minio.CompletePart
+	for num := 1; n > 0; num++ {
+		if num > maxParts {
+			return nil, fmt.Errorf("backup is larger than %d parts of %d MB; raise part_size_mb", maxParts, len(buf)>>20)
+		}
+		data := buf[:n]
+		part, err := core.PutObjectPart(ctx, s.bucket, object, uploadID, num, bytes.NewReader(data), int64(n),
+			minio.PutObjectPartOptions{Md5Base64: md5Base64(data)})
+		if err != nil {
+			return nil, fmt.Errorf("upload part %d: %w", num, err)
+		}
+		parts = append(parts, minio.CompletePart{PartNumber: num, ETag: quoteETag(part.ETag)})
+
+		if n, err = io.ReadFull(r, buf); err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			return nil, err
+		}
+	}
+	return parts, nil
+}
+
+const maxParts = 10000
+
+func quoteETag(etag string) string {
+	etag = strings.TrimPrefix(etag, "W/")
+	return `"` + strings.Trim(etag, `"`) + `"`
+}
+
+func md5Base64(b []byte) string {
+	sum := md5.Sum(b)
+	return base64.StdEncoding.EncodeToString(sum[:])
 }
 
 func (s *S3) Get(ctx context.Context, key string) (io.ReadCloser, error) {
@@ -113,6 +176,16 @@ func (s *S3) List(ctx context.Context, prefix string) ([]Object, error) {
 
 func (s *S3) Delete(ctx context.Context, key string) error {
 	return s.client.RemoveObject(ctx, s.bucket, joinKey(s.prefix, key), minio.RemoveObjectOptions{})
+}
+
+func (s *S3) CheckMultipart(ctx context.Context, key string) error {
+	const part = 5 << 20
+	data := make([]byte, part+1024)
+	object := joinKey(s.prefix, key)
+	if err := s.upload(ctx, object, bytes.NewReader(data), part); err != nil {
+		return err
+	}
+	return s.client.RemoveObject(ctx, s.bucket, object, minio.RemoveObjectOptions{})
 }
 
 func (s *S3) CheckBucket(ctx context.Context) error {
