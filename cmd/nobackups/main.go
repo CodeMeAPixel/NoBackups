@@ -271,7 +271,7 @@ func cmdCheck(ctx context.Context, r *backup.Runner) error {
 }
 
 func checkDestination(ctx context.Context, r *backup.Runner, name string) error {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	b, err := r.Backend(name)
 	if err != nil {
@@ -285,6 +285,11 @@ func checkDestination(ctx context.Context, r *backup.Runner, name string) error 
 	key := fmt.Sprintf(".nobackups-check-%s-%d", r.Cfg.Hostname, time.Now().UnixNano())
 	if err := b.Put(ctx, key, strings.NewReader("nobackups write test\n")); err != nil {
 		return fmt.Errorf("write: %w", err)
+	}
+	if s3, ok := b.(*storage.S3); ok {
+		if err := s3.CheckMultipart(ctx, key+"-multipart"); err != nil {
+			return fmt.Errorf("multipart write: %w", err)
+		}
 	}
 	if _, err := b.List(ctx, ""); err != nil {
 		return fmt.Errorf("list: %w", err)

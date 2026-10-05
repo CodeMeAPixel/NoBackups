@@ -8,7 +8,7 @@ SOURCE=${NOBACKUPS_SOURCE:-auto}
 say() { printf '==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
-[ "$(id -u)" -eq 0 ] || die "run as root, e.g. sudo sh $0"
+[ "$(id -u)" -eq 0 ] || die "run as root, e.g. sudo sh install.sh"
 [ "$(uname -s)" = Linux ] || die "NoBackups runs on Linux servers"
 
 TMP=$(mktemp -d)

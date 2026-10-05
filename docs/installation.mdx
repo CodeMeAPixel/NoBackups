@@ -11,7 +11,7 @@ All you need is an SSH session to the server: PowerShell or Windows Terminal (`s
 ```bash
 git clone https://github.com/CodeMeAPixel/NoBackups
 cd NoBackups
-sudo ./install.sh
+sudo sh install.sh
 ```
 
 The installer picks the best way to get a binary:
@@ -22,7 +22,7 @@ The installer picks the best way to get a binary:
 Then it installs the binary, config and systemd unit, as described in [What gets installed](#what-gets-installed).
 
 <Tip>
-  If `./install.sh` says "permission denied", run `sudo sh ./install.sh` instead. This can happen when the repository was last committed from Windows, which doesn't keep the executable bit.
+  Already logged in as root? Drop the `sudo`: `sh install.sh`.
 </Tip>
 
 ## Other ways to install
@@ -69,7 +69,7 @@ Then it installs the binary, config and systemd unit, as described in [What gets
 
 ## Installer options
 
-Set these as environment variables in front of `sudo ./install.sh` (or after `sudo` with the one-liner, e.g. `curl ... | sudo NOBACKUPS_VERSION=v0.2.0 sh`):
+Put them **after** `sudo`, because `sudo` drops variables set before it: `sudo NOBACKUPS_VERSION=v0.2.0 sh install.sh`, or with the one-liner `curl ... | sudo NOBACKUPS_VERSION=v0.2.0 sh`.
 
 | Variable | Effect |
 |---|---|
@@ -78,7 +78,7 @@ Set these as environment variables in front of `sudo ./install.sh` (or after `su
 | `NOBACKUPS_SOURCE=build` | Always build from source; fail if Go isn't available |
 | `NOBACKUPS_DOWNLOAD_URL=https://mirror.example/nobackups` | Download release files from a mirror (it must serve the binaries and `SHA256SUMS`) |
 
-You can also install a binary you already have: `sudo ./install.sh ./nobackups-linux-amd64`.
+You can also install a binary you already have: `sudo sh install.sh ./nobackups-linux-amd64`.
 
 ## What gets installed
 
@@ -106,7 +106,7 @@ sudo systemctl enable --now nobackups
 Run the same thing again:
 
 ```bash
-cd NoBackups && git pull && sudo ./install.sh     # clone
+cd NoBackups && git pull && sudo sh install.sh     # clone
 curl -fsSL https://raw.githubusercontent.com/CodeMeAPixel/NoBackups/master/install.sh | sudo sh   # one-liner
 ```
 
