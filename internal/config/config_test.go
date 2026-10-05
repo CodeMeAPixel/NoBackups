@@ -86,3 +86,17 @@ jobs:
 		}
 	}
 }
+
+func TestUnquotedBraceValueHint(t *testing.T) {
+	cfg := strings.Replace(minimal, "prefix: /srv/{hostname}/", "prefix: {hostname}", 1)
+	t.Setenv("NB_TEST_KEY", "k")
+	_, err := Parse([]byte(cfg), "test.yaml")
+	if err == nil || !strings.Contains(err.Error(), `prefix: "{hostname}"`) {
+		t.Fatalf("expected a quoting hint, got %v", err)
+	}
+	quoted := strings.Replace(minimal, "prefix: /srv/{hostname}/", `prefix: "{hostname}"`, 1)
+	c, err := Parse([]byte("hostname: web01\n"+quoted), "test.yaml")
+	if err != nil || c.Destinations["s3"].Prefix != "web01" {
+		t.Fatalf("quoted prefix: %v %+v", err, c)
+	}
+}

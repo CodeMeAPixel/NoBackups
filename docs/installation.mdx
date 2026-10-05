@@ -16,7 +16,7 @@ sudo sh install.sh
 
 The installer picks the best way to get a binary:
 
-- **Go 1.24+ on the server**: builds from the source you just cloned.
+- **Go 1.24+ on the server**: builds from the source you just cloned. See [Installing Go](#installing-go-optional) if you want this.
 - **No Go**: downloads the matching release binary for the server's CPU (amd64, arm64 or armv7) and verifies its SHA-256 checksum. You don't need Go or make.
 
 Then it installs the binary, config and systemd unit, as described in [What gets installed](#what-gets-installed).
@@ -24,6 +24,80 @@ Then it installs the binary, config and systemd unit, as described in [What gets
 <Tip>
   Already logged in as root? Drop the `sudo`: `sh install.sh`.
 </Tip>
+
+## Installing Go (optional)
+
+You only need Go if you want the installer to **build from source**. Without it, the installer downloads a prebuilt release binary instead, which works just as well. Building from source is handy when you want to run a fix from a branch before it's released, or when you'd rather not run prebuilt binaries.
+
+Check whether you already have a recent enough version:
+
+```bash
+go version   # needs go1.24 or newer
+```
+
+<Warning>
+  Avoid `apt install golang` and other distro packages: they're often too old (Ubuntu 24.04 ships Go 1.22, for example). Use the official release from go.dev below.
+</Warning>
+
+<Steps>
+  <Step title="Download and install the latest Go">
+    Run as root on the server. This detects the CPU (amd64, arm64 or armv7), downloads the current release from [go.dev](https://go.dev/dl/), and installs it to `/usr/local/go`:
+
+    ```bash
+    GO_VERSION=$(curl -fsSL "https://go.dev/VERSION?m=text" | head -1)
+    case $(uname -m) in
+      x86_64)  GO_ARCH=amd64 ;;
+      aarch64) GO_ARCH=arm64 ;;
+      armv7l)  GO_ARCH=armv6l ;;
+      *)       GO_ARCH=$(uname -m) ;;
+    esac
+    curl -fsSLO "https://go.dev/dl/${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
+    rm -rf /usr/local/go && tar -C /usr/local -xzf "${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
+    rm "${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
+    echo 'export PATH=$PATH:/usr/local/go/bin' > /etc/profile.d/go.sh
+    . /etc/profile.d/go.sh
+    go version
+    ```
+
+    You should see something like `go version go1.25.1 linux/amd64`.
+  </Step>
+  <Step title="Open a new SSH session">
+    `/etc/profile.d/go.sh` adds Go to your `PATH` for every future login. If `go` reports `command not found` in another shell, log out and back in.
+
+    You don't need to configure anything for `sudo`: `install.sh` looks in `/usr/local/go/bin` itself, even when `sudo` resets your `PATH`.
+  </Step>
+  <Step title="Install NoBackups from source">
+    ```bash
+    cd NoBackups
+    sudo sh install.sh
+    ```
+
+    Look for `==> building … from source with go1.25.1` in the output.
+  </Step>
+</Steps>
+
+### Trying an unreleased fix
+
+With Go installed, you can run any branch before it's released:
+
+```bash
+cd NoBackups
+git fetch origin
+git checkout <branch-name>
+sudo sh install.sh
+```
+
+Switch back with `git checkout master && git pull && sudo sh install.sh`.
+
+### Upgrading or removing Go
+
+Re-run the commands above to upgrade; they replace `/usr/local/go` with the latest release. To remove Go entirely:
+
+```bash
+rm -rf /usr/local/go /etc/profile.d/go.sh
+```
+
+NoBackups keeps working after Go is removed, because the installed binary has no dependencies. Future `install.sh` runs will download release binaries instead of building.
 
 ## Other ways to install
 

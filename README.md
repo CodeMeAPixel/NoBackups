@@ -35,6 +35,26 @@ sudo sh install.sh
 
 If the server has Go 1.24+, the installer builds from source. Otherwise it downloads the release binary for the server's CPU and verifies its checksum. Upgrading is `git pull && sudo sh install.sh`.
 
+Want the installer to build from source? Install Go 1.24+ first (as root). Distro packages like `apt install golang` are usually too old, so use the official release:
+
+```sh
+GO_VERSION=$(curl -fsSL "https://go.dev/VERSION?m=text" | head -1)
+case $(uname -m) in
+  x86_64)  GO_ARCH=amd64 ;;
+  aarch64) GO_ARCH=arm64 ;;
+  armv7l)  GO_ARCH=armv6l ;;
+  *)       GO_ARCH=$(uname -m) ;;
+esac
+curl -fsSLO "https://go.dev/dl/${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
+rm -rf /usr/local/go && tar -C /usr/local -xzf "${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
+rm "${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
+echo 'export PATH=$PATH:/usr/local/go/bin' > /etc/profile.d/go.sh
+. /etc/profile.d/go.sh
+go version
+```
+
+Go is optional; see the [installation docs](docs/installation.mdx) for details.
+
 Other options:
 
 ```sh

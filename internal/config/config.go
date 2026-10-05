@@ -173,6 +173,9 @@ func Parse(raw []byte, path string) (*Config, error) {
 	cfg := &Config{}
 	if root.Kind != 0 {
 		if err := root.Decode(cfg); err != nil {
+			if strings.Contains(err.Error(), "cannot unmarshal !!map into string") {
+				return nil, fmt.Errorf("parse %s: %w\nhint: a value starting with { must be quoted, e.g. prefix: \"{hostname}\"", path, err)
+			}
 			return nil, fmt.Errorf("parse %s: %w", path, err)
 		}
 	}
