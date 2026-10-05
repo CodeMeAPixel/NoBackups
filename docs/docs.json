@@ -1,6 +1,6 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "maple",
+  "theme": "almond",
   "name": "NoBackups",
   "description": "Config-driven backups for Linux servers, to any S3-compatible storage.",
   "colors": {
@@ -118,5 +118,8 @@
     "socials": {
       "github": "https://github.com/codemeapixel/nobackups"
     }
+  },
+  "appearance": {
+    "default": "system"
   }
 }
